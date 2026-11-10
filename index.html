@@ -183,7 +183,7 @@ details summary { cursor: pointer; font-weight: 500; }
           <select id="setDpi"><option value="203">203 dpi (most pocket printers)</option><option value="300">300 dpi</option></select>
         </label>
         <label>Photo style
-          <select id="setBg"><option value="local">Detail</option><option value="balanced">Bold</option><option value="dots">Dots</option><option value="solid">Original</option></select>
+          <select id="setBg"><option value="dots">Dots</option><option value="local">Detail</option><option value="balanced">Bold</option><option value="solid">Original</option></select>
         </label>
       </div>
       <button class="btn ghost" type="button" id="signOut">Sign out</button>
@@ -340,7 +340,7 @@ function turn(src, clockwise) {
 // The label follows the photo: held upright, the photo stands and the waveform runs down it;
 // held sideways, the photo lies and the waveform runs across. Either way the whole photo is used
 // and the sticker is the same size on the roll: the paper's width by about 77 mm.
-async function drawLabel({ env, photo, id, place, seconds, dpi = 203, bgStyle = "local" }) {
+async function drawLabel({ env, photo, id, place, seconds, dpi = 203, bgStyle = "dots" }) {
   const P = PRINTERS[dpi], ppm = dpi / 25.4;
   const portrait = !photo || photo.height > photo.width;
   // everything is drawn lying down (code left to right), then stood up for an upright photo
@@ -634,8 +634,8 @@ function closeSheet() {
   $("sheet").hidden = true;
   $("sheetBody").querySelectorAll("video").forEach((v) => v.pause());
 }
-function settings() { return { dpi: +store.get("dpi", "203"), bgStyle: store.get("bg", "local") }; }
-const BG_STYLES = [["local", "Detail"], ["balanced", "Bold"], ["dots", "Dots"], ["solid", "Original"]];
+function settings() { return { dpi: +store.get("dpi", "203"), bgStyle: store.get("bg", "dots") }; }
+const BG_STYLES = [["dots", "Dots"], ["local", "Detail"], ["balanced", "Bold"], ["solid", "Original"]];
 
 async function review(m) {
   const body = openSheet();
@@ -932,7 +932,7 @@ $("addForm").addEventListener("submit", async (e) => {
 });
 $("setDpi").value = store.get("dpi", "203");
 $("setDpi").addEventListener("change", (e) => store.set("dpi", e.target.value));
-$("setBg").value = store.get("bg", "local");
+$("setBg").value = store.get("bg", "dots");
 $("setBg").addEventListener("change", (e) => store.set("bg", e.target.value));
 $("signOut").addEventListener("click", () => sb.auth.signOut());
 
