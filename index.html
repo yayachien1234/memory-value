@@ -1,0 +1,828 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d0f13">
+<title>Memory &amp; Value</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:opsz,wght@6..96,500&family=Jost:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js"></script>
+<style>
+/* A camera app first: the viewfinder fills the screen, tabs sit at the bottom, everything else slides up as a sheet. */
+:root {
+  --night: #0d0f13;
+  --panel: #171a21;
+  --line: #2c313b;
+  --paper: #f3f4f6;
+  --muted: #a3aab6;
+  --accent: #8fb0ff;
+  --found: #9fe0b4;
+  --rec: #ff6b5e;
+  --display: "Bodoni Moda", "Didot", Georgia, serif;
+  --body: "Jost", "Futura", "Avenir Next", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--night); color: var(--paper); font-family: var(--body); font-size: 16px; line-height: 1.45; }
+[hidden] { display: none !important; }
+button, input, select { font: inherit; color: inherit; }
+.btn { border: 0; border-radius: 999px; padding: 13px 20px; background: var(--paper); color: var(--night); font-weight: 500; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.btn.ghost { background: transparent; color: var(--paper); outline: 1px solid var(--line); }
+.btn[disabled] { opacity: .45; cursor: default; }
+.btn:focus-visible, input:focus-visible, select:focus-visible, .tab:focus-visible, .row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+input, select { width: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+label { display: grid; gap: 6px; font-size: 14px; color: var(--muted); }
+.eyebrow { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin: 0; }
+h1, h2 { font-family: var(--display); font-weight: 500; margin: 0; }
+h1 { font-size: 34px; line-height: 1.05; }
+h2 { font-size: 26px; }
+.mono { font-family: var(--mono); letter-spacing: .06em; }
+.status { min-height: 1.4em; margin: 0; font-size: 14px; color: var(--muted); }
+.status.err { color: var(--rec); }
+.gutter { padding-left: max(18px, env(safe-area-inset-left, 0px)); padding-right: max(18px, env(safe-area-inset-right, 0px)); }
+
+/* sign in */
+#auth { min-height: 100%; display: grid; place-content: center; gap: 22px; max-width: 26rem; margin: 0 auto; padding-block: 40px; }
+#auth form { display: grid; gap: 14px; }
+#auth .pair { display: flex; gap: 10px; flex-wrap: wrap; }
+
+/* camera views */
+.cam { position: fixed; inset: 0; }
+.cam video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #000; }
+.cam .top { position: absolute; top: 0; left: 0; right: 0; display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;
+  padding-top: calc(env(safe-area-inset-top, 0px) + 14px); background: linear-gradient(rgba(13,15,19,.75), transparent); padding-bottom: 30px; }
+.chip { background: rgba(23,26,33,.8); border: 1px solid var(--line); border-radius: 999px; padding: 8px 14px; font-size: 14px; cursor: pointer; }
+.cam .bottom { position: absolute; left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom, 0px) + 74px); display: grid; justify-items: center; gap: 12px; }
+.shutter { width: 76px; height: 76px; border-radius: 50%; border: 4px solid var(--paper); background: transparent; display: grid; place-items: center; cursor: pointer; padding: 0; }
+.shutter::after { content: ""; width: 58px; height: 58px; border-radius: 50%; background: var(--paper); transition: all .2s; }
+.shutter.recording::after { width: 28px; height: 28px; border-radius: 6px; background: var(--rec); }
+.shutter[disabled] { opacity: .4; }
+.hint { margin: 0; font-size: 15px; text-shadow: 0 1px 6px rgba(0,0,0,.6); text-align: center; }
+#liveWave { position: absolute; left: 6%; right: 6%; width: 88%; height: 90px; bottom: calc(env(safe-area-inset-bottom, 0px) + 190px); }
+.count { font-family: var(--mono); font-size: 15px; color: var(--rec); }
+.frame { position: absolute; left: 5%; right: 5%; top: 32%; height: 30%; border-radius: 14px; outline: 1.5px solid rgba(243,244,246,.85); box-shadow: 0 0 0 100vmax rgba(13,15,19,.45); pointer-events: none; }
+.frame::after { content: ""; position: absolute; left: 6%; right: 6%; top: 50%; height: 1px; background: var(--accent); }
+.frame.found { outline-color: var(--found); }
+
+/* tabs */
+nav { position: fixed; left: 0; right: 0; bottom: 0; display: grid; grid-template-columns: repeat(3, 1fr); background: rgba(13,15,19,.92);
+  border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom, 0px); z-index: 20; }
+.tab { background: none; border: 0; padding: 14px 4px 16px; font-size: 14px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); cursor: pointer; }
+.tab[aria-current="page"] { color: var(--paper); }
+
+/* sheets */
+.sheet { position: fixed; inset: 0; z-index: 30; background: var(--night); overflow-y: auto; }
+.sheet .inner { max-width: 34rem; margin: 0 auto; padding-top: calc(env(safe-area-inset-top, 0px) + 18px); padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 40px); display: grid; gap: 18px; }
+.sheet header { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.labelimg { width: 100%; background: #fff; border-radius: 6px; image-rendering: pixelated; display: block; }
+.sheet video, .sheet .photo { width: 100%; border-radius: 12px; background: #000; display: block; max-height: 62vh; object-fit: contain; }
+.actions { display: flex; gap: 10px; flex-wrap: wrap; }
+dl.meta { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; font-size: 14px; }
+dl.meta dt { color: var(--muted); }
+dl.meta dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.grid2 { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
+@media (max-width: 420px) { .grid2 { grid-template-columns: 1fr; } }
+
+/* library */
+#library { min-height: 100%; padding-top: calc(env(safe-area-inset-top, 0px) + 22px); padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 90px); }
+#library .inner { max-width: 34rem; margin: 0 auto; display: grid; gap: 22px; }
+.list { display: grid; border-top: 1px solid var(--line); }
+.row { display: grid; grid-template-columns: 64px 1fr; gap: 14px; align-items: center; padding: 12px 0; border: 0; border-bottom: 1px solid var(--line); background: none; text-align: left; cursor: pointer; }
+.row img { width: 64px; height: 64px; object-fit: cover; border-radius: 8px; background: var(--panel); }
+.row .p { font-weight: 500; }
+.row .d { font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.box { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; display: grid; gap: 12px; }
+details summary { cursor: pointer; font-weight: 500; }
+</style>
+</head>
+<body>
+
+<!-- sign in -->
+<section id="auth" class="gutter" hidden>
+  <div>
+    <p class="eyebrow">Memory &amp; Value</p>
+    <h1>Memory Camera</h1>
+  </div>
+  <form id="authForm">
+    <label>Email <input id="email" type="email" autocomplete="username" required></label>
+    <label>Password <input id="password" type="password" autocomplete="current-password" minlength="6" required></label>
+    <div class="pair">
+      <button class="btn" type="submit" id="signIn">Sign in</button>
+      <button class="btn ghost" type="button" id="signUp">Create account</button>
+    </div>
+    <p class="status" id="authStatus" role="status" aria-live="polite"></p>
+  </form>
+</section>
+
+<!-- capture -->
+<section id="capture" class="cam" hidden>
+  <video id="capVideo" playsinline muted autoplay></video>
+  <div class="top gutter">
+    <button class="chip" id="placeChip" type="button" aria-label="Change the place">HONG KONG</button>
+    <button class="chip" id="flip" type="button">Flip</button>
+  </div>
+  <canvas id="liveWave" hidden></canvas>
+  <div class="bottom gutter">
+    <p class="hint" id="capHint">Press once: a photo, then 10 seconds of sound and video.</p>
+    <button class="shutter" id="shutter" type="button" aria-label="Take the photo and start recording"></button>
+  </div>
+</section>
+
+<!-- scan -->
+<section id="scan" class="cam" hidden>
+  <video id="scanVideo" playsinline muted autoplay></video>
+  <div class="frame" id="scanFrame"></div>
+  <div class="bottom gutter">
+    <p class="hint" id="scanHint">Hold the memory code inside the frame, along the line.</p>
+  </div>
+</section>
+
+<!-- library -->
+<section id="library" class="gutter" hidden>
+  <div class="inner">
+    <div>
+      <p class="eyebrow">Memory &amp; Value</p>
+      <h1>Library</h1>
+    </div>
+    <div class="list" id="list"><p class="status">Loading…</p></div>
+
+    <details class="box" id="addBox">
+      <summary>Add a memory from files</summary>
+      <form id="addForm" class="box" style="padding:0;border:0;background:none">
+        <label>Video with sound <input id="addVideo" type="file" accept="video/*" required></label>
+        <label>Photo (optional, otherwise a frame of the video) <input id="addPhoto" type="file" accept="image/*"></label>
+        <label>Recorded at <input id="addTime" type="datetime-local" step="1" required></label>
+        <p class="status mono" id="addId"></p>
+        <div class="grid2">
+          <label>Place <input id="addPlace" placeholder="HONG KONG"></label>
+          <label>Souvenir <input id="addSouvenir" placeholder="What was bought"></label>
+        </div>
+        <button class="btn" type="submit" id="addSave">Save memory</button>
+        <p class="status" id="addStatus" role="status" aria-live="polite"></p>
+      </form>
+    </details>
+
+    <div class="box">
+      <strong>Label printer</strong>
+      <div class="grid2">
+        <label>Resolution
+          <select id="setDpi"><option value="203">203 dpi (most pocket printers)</option><option value="300">300 dpi</option></select>
+        </label>
+        <label>Label size
+          <select id="setSize"><option value="compact">72 × 36 mm</option><option value="big">96 × 48 mm</option></select>
+        </label>
+      </div>
+      <button class="btn ghost" type="button" id="signOut">Sign out</button>
+    </div>
+  </div>
+</section>
+
+<!-- review after capture, and the memory player -->
+<section class="sheet" id="sheet" hidden>
+  <div class="inner gutter" id="sheetBody"></div>
+</section>
+
+<nav id="tabs" hidden>
+  <button class="tab" data-view="capture" type="button">Capture</button>
+  <button class="tab" data-view="scan" type="button">Scan</button>
+  <button class="tab" data-view="library" type="button">Library</button>
+</nav>
+
+<script>
+"use strict";
+// ---------------------------------------------------------------- setup
+const SB_URL = "https://wbbiziitqxosazvjupmt.supabase.co";
+const SB_KEY = "sb_publishable_Z1n00w5SO0TsS3dNLHI61Q_8xefN5u0";   // publishable: meant to sit in the page
+const sb = window.supabase.createClient(SB_URL, SB_KEY);
+const BUCKET = "memories";
+const RECORD_SECONDS = 10;
+
+const $ = (id) => document.getElementById(id);
+const store = {
+  get(k, d) { try { return localStorage.getItem("mv." + k) ?? d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem("mv." + k, v); } catch { /* private mode */ } },
+};
+let user = null;
+let view = null;
+
+function say(el, msg, err = false) { el.textContent = msg; el.classList.toggle("err", err); }
+function el(tag, attrs = {}, text) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (text != null) n.textContent = text;
+  return n;
+}
+const two = (n) => String(n).padStart(2, "0");
+function idFromDate(d) {
+  return `${two(d.getFullYear() % 100)}${two(d.getMonth() + 1)}${two(d.getDate())}${two(d.getHours())}${two(d.getMinutes())}${two(d.getSeconds())}`;
+}
+function dateFromId(id) {
+  return new Date(2000 + +id.slice(0, 2), +id.slice(2, 4) - 1, +id.slice(4, 6), +id.slice(6, 8), +id.slice(8, 10), +id.slice(10, 12));
+}
+const prettyId = (id) => `${id.slice(4, 6)}.${id.slice(2, 4)}.20${id.slice(0, 2)}  ${id.slice(6, 8)}:${id.slice(8, 10)}:${id.slice(10)}`;
+
+// ---------------------------------------------------------------- the label (E1 carved waveform, photo version A)
+// Code 39 table: value and module pattern (1 = bar, 0 = space, three in a row = wide).
+const C39 = {"map":{"0":[0,"101000111011101"],"1":[1,"111010001010111"],"2":[2,"101110001010111"],"3":[3,"111011100010101"],"4":[4,"101000111010111"],"5":[5,"111010001110101"],"6":[6,"101110001110101"],"7":[7,"101000101110111"],"8":[8,"111010001011101"],"9":[9,"101110001011101"],"A":[10,"111010100010111"],"B":[11,"101110100010111"],"C":[12,"111011101000101"],"D":[13,"101011100010111"],"E":[14,"111010111000101"],"F":[15,"101110111000101"],"G":[16,"101010001110111"],"H":[17,"111010100011101"],"I":[18,"101110100011101"],"J":[19,"101011100011101"],"K":[20,"111010101000111"],"L":[21,"101110101000111"],"M":[22,"111011101010001"],"N":[23,"101011101000111"],"O":[24,"111010111010001"],"P":[25,"101110111010001"],"Q":[26,"101010111000111"],"R":[27,"111010101110001"],"S":[28,"101110101110001"],"T":[29,"101011101110001"],"U":[30,"111000101010111"],"V":[31,"100011101010111"],"W":[32,"111000111010101"],"X":[33,"100010111010111"],"Y":[34,"111000101110101"],"Z":[35,"100011101110101"],"-":[36,"100010101110111"],".":[37,"111000101011101"]," ":[38,"100011101011101"],"$":[39,"100010001000101"],"/":[40,"100010001010001"],"+":[41,"100010100010001"],"%":[42,"101000100010001"]},"edge":"100010111011101","gap":"0"};
+
+function code39Bars(data, narrow, wide) {
+  const check = [...data].reduce((s, ch) => s + C39.map[ch][0], 0) % 43;
+  const checkCh = Object.keys(C39.map).find((k) => C39.map[k][0] === check);
+  const mods = [C39.edge, ...[...data, checkCh].map((ch) => C39.map[ch][1]), C39.edge].join(C39.gap);
+  const bars = [];
+  let pos = 0;
+  for (let i = 0; i < mods.length;) {
+    let j = i;
+    while (j < mods.length && mods[j] === mods[i]) j++;
+    const w = j - i === 3 ? wide : narrow;          // every bar is a whole number of printer dots
+    if (mods[i] === "1") bars.push([pos, pos + w]);
+    pos += w; i = j;
+  }
+  return { bars, length: pos };
+}
+
+// The stored outline (a few hundred points) drawn as a clean silhouette: keep every peak, drop the hiss.
+function smoothOutline(env) {
+  const n = 2000, f = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * (env.length - 1), a = Math.floor(x), b = Math.min(a + 1, env.length - 1);
+    f[i] = env[a] + (env[b] - env[a]) * (x - a);
+  }
+  const held = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    let m = 0;
+    for (let k = -6; k <= 6; k++) m = Math.max(m, f[Math.min(n - 1, Math.max(0, i + k))]);
+    held[i] = m;
+  }
+  const win = Array.from({ length: 21 }, (_, k) => 0.5 - 0.5 * Math.cos((2 * Math.PI * k) / 20));
+  const sum = win.reduce((a, b) => a + b, 0);
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    let s = 0;
+    for (let k = 0; k < 21; k++) { const j = i + k - 10; if (j >= 0 && j < n) s += held[j] * win[k]; }
+    out[i] = s / sum;
+  }
+  return out;
+}
+
+const PRINTERS = { 203: { head: 384, narrow: 2, wide: 5 }, 300: { head: 576, narrow: 3, wide: 7 } };
+const SIZES = {   // millimetres; the photo stops above the band that holds the ruler and the words
+  compact: { W: 72, H: () => 36, HALF: 10.5, CY: 13.75, TOP: 28.4, PHOTO: 27.05 },
+  big:     { W: 96, H: (ppm, head) => head / ppm, HALF: 14, CY: 19, TOP: 39.3, PHOTO: 38.4 },
+};
+
+async function drawLabel({ env, photo, id, place, seconds, dpi = 203, size = "compact" }) {
+  const P = PRINTERS[dpi], ppm = dpi / 25.4, G = SIZES[size];
+  const W = Math.round(G.W * ppm), H = Math.round(G.H(ppm, P.head) * ppm);
+  const code = code39Bars("MV-" + id, P.narrow, P.wide);
+  const L = code.length, pad = Math.round((W - L) / 2);
+  const cy = Math.round(G.CY * ppm), half = G.HALF * ppm, floor = 0.8 * ppm;
+  const outline = smoothOutline(env);
+  const hAt = (c) => Math.max(outline[Math.min(1999, Math.floor((c / L) * 1999))] * half, floor);
+
+  // 1. the waveform, then the code's spaces cut right through it
+  const ink = new Uint8Array(W * H);
+  for (let c = 0; c < L; c++) {
+    const h = hAt(c), y0 = Math.max(0, Math.round(cy - h)), y1 = Math.min(H - 1, Math.round(cy + h));
+    for (let y = y0; y <= y1; y++) ink[y * W + pad + c] = 1;
+  }
+  const gaps = [];
+  for (let k = 0; k < code.bars.length - 1; k++) gaps.push([code.bars[k][1], code.bars[k + 1][0]]);
+  for (const [s0, s1] of gaps) for (let c = s0; c < s1; c++) for (let y = 0; y < H; y++) ink[y * W + pad + c] = 0;
+
+  // 2. the photo, in solid black and white, kept out of the code's own white
+  let bg = null;
+  if (photo) {
+    const ph = Math.round(G.PHOTO * ppm);
+    // fill the picture area, keeping the top of the photo (where the faces usually are)
+    const big = document.createElement("canvas");
+    big.width = W; big.height = ph;
+    const bgx = big.getContext("2d", { willReadFrequently: true });
+    const pw = photo.width, phh = photo.height, want = W / ph;
+    let sw = pw, sh = pw / want;
+    if (sh > phh) { sh = phh; sw = phh * want; }
+    bgx.imageSmoothingQuality = "high";
+    bgx.drawImage(photo, (pw - sw) / 2, Math.min(phh - sh, phh * 0.03), sw, sh, 0, 0, W, ph);
+    const px = bgx.getImageData(0, 0, W, ph).data;
+    const grey = new Uint8Array(W * ph), hist = new Uint32Array(256);
+    for (let i = 0; i < W * ph; i++) { const g = (px[i * 4] * 299 + px[i * 4 + 1] * 587 + px[i * 4 + 2] * 114) / 1000 | 0; grey[i] = g; hist[g]++; }
+    let lo = 0, hi = 255, acc = 0;                                   // stretch the tones, ignoring the 2 % at each end
+    const cut = W * ph * 0.02;
+    for (; lo < 255 && (acc += hist[lo]) < cut; lo++);
+    acc = 0;
+    for (; hi > 0 && (acc += hist[hi]) < cut; hi--);
+    const span = Math.max(1, hi - lo);
+    bg = new Uint8Array(W * H);
+    for (let i = 0; i < W * ph; i++) bg[i] = ((grey[i] - lo) * 255) / span < 80 ? 1 : 0;
+    // clean reading line through the middle, across the whole label
+    const band = Math.max(2, Math.round(0.8 * ppm));
+    for (let y = cy - band; y <= cy + band; y++) for (let x = 0; x < W; x++) bg[y * W + x] = 0;
+    // each slit cleared as tall as the taller bar beside it
+    for (const [s0, s1] of gaps) {
+      const h = Math.max(hAt(Math.max(0, s0 - 1)), hAt(Math.min(L - 1, s1)));
+      for (let c = s0; c < s1; c++) for (let y = Math.max(0, Math.round(cy - h)); y <= Math.min(ph - 1, Math.round(cy + h)); y++) bg[y * W + pad + c] = 0;
+    }
+  }
+
+  // 3. paint, then the ruler and words, then force everything to pure black or white
+  const canvas = document.createElement("canvas");
+  canvas.width = W; canvas.height = H;
+  const g = canvas.getContext("2d", { willReadFrequently: true });
+  const img = g.createImageData(W, H);
+  for (let i = 0; i < W * H; i++) {
+    const v = ink[i] || (bg && bg[i]) ? 0 : 255;
+    img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v; img.data[i * 4 + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+
+  await Promise.all([document.fonts.load(`500 ${Math.round(1.8 * ppm)}px "IBM Plex Mono"`), document.fonts.load(`500 ${Math.round(2 * ppm)}px Jost`)]).catch(() => {});
+  g.fillStyle = "#000"; g.textBaseline = "top";
+  const top = G.TOP * ppm, tick = Math.max(1, Math.round(0.12 * ppm));
+  for (let s = 0; s <= seconds; s += 5) g.fillRect(pad + Math.round((s / seconds) * L), top, tick, (s ? 0.9 : 1.4) * ppm);
+  g.fillRect(pad + L - tick, top, tick, 1.4 * ppm);
+  const spaced = (text, x, y, font, track, right = false) => {
+    g.font = font;
+    const width = [...text].reduce((w, ch) => w + g.measureText(ch).width + track, -track);
+    let cx = right ? x - width : x;
+    for (const ch of text) { g.fillText(ch, cx, y); cx += g.measureText(ch).width + track; }
+  };
+  const start = dateFromId(id), end = new Date(start.getTime() + Math.round(seconds) * 1000);
+  const t = (d) => `${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`;
+  const mono = `500 ${Math.round(1.8 * ppm)}px "IBM Plex Mono", monospace`, word = `500 ${Math.round(2 * ppm)}px Jost, sans-serif`;
+  spaced(t(start), pad, top + 1.7 * ppm, mono, 0.1 * ppm);
+  spaced(t(end), pad + L, top + 1.7 * ppm, mono, 0.1 * ppm, true);
+  spaced((place || "").toUpperCase(), pad, top + 4.3 * ppm, word, 0.55 * ppm);
+  spaced(`${id.slice(0, 2)}.${id.slice(2, 4)}.${id.slice(4, 6)}`, pad + L, top + 4.3 * ppm, mono, 0.15 * ppm, true);
+  const done = g.getImageData(0, 0, W, H);
+  for (let i = 0; i < done.data.length; i += 4) {
+    const v = done.data[i] + done.data[i + 1] + done.data[i + 2] < 384 ? 0 : 255;
+    done.data[i] = done.data[i + 1] = done.data[i + 2] = v;
+  }
+  g.putImageData(done, 0, 0);
+
+  // 4. the same label turned to run along the paper, exactly as wide as the print head
+  const roll = document.createElement("canvas");
+  roll.width = P.head; roll.height = W;
+  const r = roll.getContext("2d");
+  r.fillStyle = "#fff"; r.fillRect(0, 0, roll.width, roll.height);
+  const x0 = Math.floor((P.head - H) / 2);
+  r.save(); r.translate(x0, W); r.rotate(-Math.PI / 2); r.drawImage(canvas, 0, 0); r.restore();
+  if (H < P.head) {                                                     // cut marks for a label narrower than the paper
+    r.fillStyle = "#000"; const m = Math.round(1.5 * ppm);
+    r.fillRect(x0 - m, 0, m, 1); r.fillRect(x0 + H, 0, m, 1); r.fillRect(x0 - m, W - 1, m, 1); r.fillRect(x0 + H, W - 1, m, 1);
+  }
+  return { label: canvas, roll };
+}
+const toBlob = (canvas, type = "image/png", q) => new Promise((ok) => canvas.toBlob(ok, type, q));
+
+// peaks of a sound -> the stored outline: 400 points, lifted so quiet passages still show
+function outlineFromPeaks(peaks, n = 400) {
+  const out = new Array(n).fill(0);
+  if (!peaks.length) return out;
+  for (let i = 0; i < n; i++) {
+    const a = Math.floor((i * peaks.length) / n), b = Math.max(a + 1, Math.floor(((i + 1) * peaks.length) / n));
+    for (let j = a; j < b && j < peaks.length; j++) out[i] = Math.max(out[i], peaks[j]);
+  }
+  const top = Math.max(...out) || 1;
+  return out.map((v) => Math.round(Math.pow(v / top, 0.6) * 1000) / 1000);
+}
+async function outlineFromFile(file) {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  try {
+    const buf = await ctx.decodeAudioData(await file.arrayBuffer());
+    const ch = buf.getChannelData(0), step = Math.max(1, Math.floor(ch.length / 4000)), peaks = [];
+    for (let i = 0; i < ch.length; i += step) { let p = 0; for (let j = i; j < i + step && j < ch.length; j++) p = Math.max(p, Math.abs(ch[j])); peaks.push(p); }
+    return { env: outlineFromPeaks(peaks), seconds: buf.duration };
+  } finally { ctx.close(); }
+}
+
+// ---------------------------------------------------------------- camera
+let stream = null, facing = store.get("facing", "environment");
+async function startCamera(videoEl, withAudio) {
+  stopCamera();
+  stream = await navigator.mediaDevices.getUserMedia({
+    audio: withAudio ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false } : false,
+    video: { facingMode: { ideal: withAudio ? facing : "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+  });
+  videoEl.srcObject = stream;
+  await videoEl.play().catch(() => {});
+}
+function stopCamera() {
+  if (stream) stream.getTracks().forEach((t) => t.stop());
+  stream = null;
+}
+function cameraError(e, hintEl) {
+  if (!window.isSecureContext) say(hintEl, "The camera only works over https.", true);
+  else if (e && e.name === "NotAllowedError") say(hintEl, "Camera or microphone access was refused. Allow both for this site in the browser settings, then reload.", true);
+  else say(hintEl, "The camera could not start. Close other apps using it, then reload.", true);
+}
+
+// ---------------------------------------------------------------- capture
+const capHint = $("capHint"), shutter = $("shutter"), wave = $("liveWave");
+function placeName() { return store.get("place", "HONG KONG"); }
+function showPlace() { $("placeChip").textContent = placeName(); }
+$("placeChip").addEventListener("click", () => {
+  const sheet = openSheet();
+  const input = el("input", { id: "placeInput", value: placeName(), autocomplete: "off" });
+  const form = el("form");
+  form.append(el("h2", {}, "Where are you?"), Object.assign(el("label", {}, "Place, printed on the label"), {}), input, el("div", { class: "actions" }));
+  form.querySelector("label").append(input);
+  const ok = el("button", { class: "btn", type: "submit" }, "Done");
+  form.querySelector(".actions").append(ok);
+  form.addEventListener("submit", (e) => { e.preventDefault(); store.set("place", input.value.trim().toUpperCase() || "SOMEWHERE"); showPlace(); closeSheet(); });
+  sheet.append(form);
+  input.focus();
+});
+$("flip").addEventListener("click", async () => {
+  facing = facing === "environment" ? "user" : "environment";
+  store.set("facing", facing);
+  try { await startCamera($("capVideo"), true); } catch (e) { cameraError(e, capHint); }
+});
+
+let busy = false;
+shutter.addEventListener("click", async () => {
+  if (busy || !stream) return;
+  busy = true;
+  const moment = new Date(), id = idFromDate(moment);
+  const video = $("capVideo");
+  // the photo: this exact frame
+  const shot = document.createElement("canvas");
+  shot.width = video.videoWidth; shot.height = video.videoHeight;
+  shot.getContext("2d").drawImage(video, 0, 0);
+  const photoBlob = await toBlob(shot, "image/jpeg", 0.9);
+
+  // then the sound and video
+  const types = ["video/mp4;codecs=avc1.42E01E,mp4a.40.2", "video/mp4", "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
+  const mime = types.find((t) => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || "";
+  const chunks = [];
+  const rec = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 2500000 } : undefined);
+  rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+  const audio = new (window.AudioContext || window.webkitAudioContext)();
+  const src = audio.createMediaStreamSource(new MediaStream(stream.getAudioTracks()));
+  const an = audio.createAnalyser(); an.fftSize = 2048; src.connect(an);
+  const buf = new Float32Array(an.fftSize), peaks = [];
+  wave.hidden = false;
+  const wg = wave.getContext("2d");
+  wave.width = wave.clientWidth * devicePixelRatio; wave.height = wave.clientHeight * devicePixelRatio;
+  shutter.classList.add("recording");
+  const started = performance.now();
+  rec.start(250);
+  await new Promise((done) => {
+    const frame = () => {
+      an.getFloatTimeDomainData(buf);
+      let p = 0; for (const v of buf) p = Math.max(p, Math.abs(v));
+      peaks.push(p);
+      const elapsed = (performance.now() - started) / 1000;
+      capHint.innerHTML = "";
+      capHint.append(el("span", { class: "count" }, `● ${Math.max(0, RECORD_SECONDS - elapsed).toFixed(1)} s`));
+      // live waveform, growing from the left
+      wg.clearRect(0, 0, wave.width, wave.height); wg.fillStyle = "#f3f4f6";
+      const n = peaks.length, w = wave.width, h = wave.height, top = Math.max(...peaks, 0.05);
+      for (let i = 0; i < n; i++) {
+        const x = (i / (RECORD_SECONDS * 60)) * w, a = (Math.pow(peaks[i] / top, 0.6) * h) / 2;
+        wg.fillRect(x, h / 2 - a, Math.max(1, w / (RECORD_SECONDS * 60)), Math.max(1, a * 2));
+      }
+      if (elapsed >= RECORD_SECONDS || stopEarly) return done();
+      requestAnimationFrame(frame);
+    };
+    let stopEarly = false;
+    shutter.onclick = () => { stopEarly = true; };
+    requestAnimationFrame(frame);
+  });
+  shutter.onclick = null;
+  const seconds = (performance.now() - started) / 1000;
+  const stopped = new Promise((ok) => (rec.onstop = ok));
+  rec.stop(); await stopped;
+  audio.close();
+  shutter.classList.remove("recording"); wave.hidden = true;
+  say(capHint, "Making the label…");
+  const videoBlob = new Blob(chunks, { type: (mime || "video/webm").split(";")[0] });
+  const photo = await createImageBitmap(photoBlob);
+  const env = outlineFromPeaks(peaks);
+  busy = false;
+  say(capHint, "Press once: a photo, then 10 seconds of sound and video.");
+  review({ id, env, seconds, photo, photoBlob, videoBlob });
+});
+
+// ---------------------------------------------------------------- review and save
+function openSheet() {
+  const s = $("sheet"), body = $("sheetBody");
+  body.replaceChildren();
+  s.hidden = false; s.scrollTop = 0;
+  return body;
+}
+function closeSheet() {
+  $("sheet").hidden = true;
+  $("sheetBody").querySelectorAll("video").forEach((v) => v.pause());
+}
+function settings() { return { dpi: +store.get("dpi", "203"), size: store.get("size", "compact") }; }
+
+async function review(m) {
+  const body = openSheet();
+  const head = el("header");
+  head.append(el("div"), el("button", { class: "btn ghost", type: "button" }, "Retake"));
+  head.firstChild.append(el("p", { class: "eyebrow" }, "New memory"), el("h2", { class: "mono" }, prettyId(m.id)));
+  head.lastChild.addEventListener("click", closeSheet);
+  const img = el("img", { class: "labelimg", alt: "The label for this memory" });
+  const place = el("input", { value: placeName() }), souvenir = el("input", { placeholder: "What was bought" });
+  const fields = el("div", { class: "grid2" });
+  const l1 = el("label", {}, "Place"); l1.append(place);
+  const l2 = el("label", {}, "Souvenir"); l2.append(souvenir);
+  fields.append(l1, l2);
+  const vid = el("video", { controls: "", playsinline: "" }); vid.src = URL.createObjectURL(m.videoBlob);
+  const save = el("button", { class: "btn", type: "button" }, "Save memory");
+  const status = el("p", { class: "status", role: "status", "aria-live": "polite" });
+  const actions = el("div", { class: "actions" }); actions.append(save);
+  body.append(head, img, fields, actions, status, vid);
+
+  let current;
+  const render = async () => {
+    current = await drawLabel({ ...m, place: place.value, ...settings() });
+    img.src = current.label.toDataURL();
+  };
+  await render();
+  place.addEventListener("change", () => { store.set("place", place.value.trim().toUpperCase()); showPlace(); render(); });
+
+  save.addEventListener("click", async () => {
+    save.disabled = true;
+    try {
+      say(status, "Saving the photo, video and label…");
+      await saveMemory({ ...m, place: place.value.trim().toUpperCase(), souvenir: souvenir.value.trim(), recordedAt: dateFromId(m.id), labelBlob: await toBlob(current.label) });
+      say(status, "Saved. Print the label, then stick it on the souvenir.");
+      actions.replaceChildren(...labelButtons(m.id, current));
+    } catch (e) {
+      say(status, "Saving failed: " + (e.message || e), true);
+      save.disabled = false;
+    }
+  });
+}
+
+async function saveMemory(m) {
+  const base = `${user.id}/${m.id}`;
+  const ext = m.videoBlob.type.includes("mp4") ? "mp4" : m.videoBlob.type.includes("quicktime") ? "mov" : "webm";
+  const up = async (name, blob, type) => {
+    const { error } = await sb.storage.from(BUCKET).upload(`${base}/${name}`, blob, { contentType: type, upsert: true });
+    if (error) throw error;
+    return `${base}/${name}`;
+  };
+  const photo_path = await up("photo.jpg", m.photoBlob, "image/jpeg");
+  const video_path = await up(`video.${ext}`, m.videoBlob, m.videoBlob.type || "video/webm");
+  const label_path = await up("label.png", m.labelBlob, "image/png");
+  const { error } = await sb.from("memories").upsert({
+    id: m.id, recorded_at: m.recordedAt.toISOString(), place: m.place, souvenir: m.souvenir || null,
+    envelope: { seconds: Math.round(m.seconds * 10) / 10, points: m.env },   // the outline and how long it lasts
+    photo_path, video_path, video_type: m.videoBlob.type, label_path,
+  });
+  if (error) throw error;
+}
+
+function labelButtons(id, drawn) {
+  const out = [];
+  const file = new File([dataUrlToBlob(drawn.roll.toDataURL("image/png"))], `memory-${id}.png`, { type: "image/png" });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    const share = el("button", { class: "btn", type: "button" }, "Send to printer app");
+    share.addEventListener("click", () => navigator.share({ files: [file], title: "Memory label" }).catch(() => {}));
+    out.push(share);
+  }
+  const a = el("a", { class: "btn ghost", download: file.name, href: URL.createObjectURL(file) }, "Download label");
+  out.push(a);
+  return out;
+}
+function dataUrlToBlob(u) {
+  const [head, data] = u.split(","), bin = atob(data), arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return new Blob([arr], { type: head.slice(5, head.indexOf(";")) });
+}
+
+// ---------------------------------------------------------------- playing a memory
+async function signed(path) {
+  if (!path) return null;
+  const { data } = await sb.storage.from(BUCKET).createSignedUrl(path, 3600);
+  return data ? data.signedUrl : null;
+}
+async function play(row, via) {
+  const body = openSheet();
+  const head = el("header");
+  head.append(el("div"), el("button", { class: "btn ghost", type: "button" }, "Close"));
+  head.firstChild.append(el("p", { class: "eyebrow" }, via), el("h2", {}, row.place || "Untitled"));
+  head.lastChild.addEventListener("click", closeSheet);
+  const vid = el("video", { controls: "", playsinline: "", autoplay: "" });
+  const note = el("p", { class: "status", role: "status" }, "Loading the memory…");
+  vid.addEventListener("canplay", () => say(note, ""), { once: true });
+  vid.addEventListener("error", () => say(note, `This phone could not play the video (error ${vid.error ? vid.error.code : "?"}).`, true));
+  const dl = el("dl", { class: "meta" });
+  const add = (k, v, cls) => { if (!v) return; dl.append(el("dt", {}, k), el("dd", cls ? { class: cls } : {}, v)); };
+  add("When", prettyId(row.id), "mono"); add("Souvenir", row.souvenir);
+  const label = el("img", { class: "labelimg", alt: "This memory's label" });
+  const actions = el("div", { class: "actions" });
+  body.append(head, vid, note, dl, label, actions);
+  const [v, l, p] = await Promise.all([signed(row.video_path), signed(row.label_path), signed(row.photo_path)]);
+  if (v) vid.src = v; else say(note, "This memory has no video.", true);
+  if (p) vid.poster = p;
+  if (l) label.src = l;
+  // a fresh label at the current printer settings, for printing again
+  try {
+    const photo = p ? await createImageBitmap(await (await fetch(p)).blob()) : null;
+    const outline = row.envelope || {};
+    const drawn = await drawLabel({ env: outline.points || [], photo, id: row.id, place: row.place, seconds: outline.seconds || RECORD_SECONDS, ...settings() });
+    label.src = drawn.label.toDataURL();
+    actions.append(...labelButtons(row.id, drawn));
+  } catch { /* the stored label still shows */ }
+}
+
+// ---------------------------------------------------------------- scan
+let scanning = false, native = null, zx = null;
+async function readers() {
+  if (native || zx) return;
+  if ("BarcodeDetector" in window) {
+    try {
+      const ok = await BarcodeDetector.getSupportedFormats();
+      if (ok.includes("code_39")) native = new BarcodeDetector({ formats: ["code_39", "code_128", "qr_code"].filter((f) => ok.includes(f)) });
+    } catch { native = null; }
+  }
+  if (!native && window.ZXing) {
+    const Z = window.ZXing, hints = new Map();
+    hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, [Z.BarcodeFormat.CODE_39, Z.BarcodeFormat.CODE_128, Z.BarcodeFormat.QR_CODE]);
+    hints.set(Z.DecodeHintType.TRY_HARDER, true);
+    zx = new Z.MultiFormatReader(); zx.setHints(hints);
+  }
+}
+const grab = document.createElement("canvas");
+function band(video, turn) {
+  const vw = video.videoWidth, vh = video.videoHeight, sx = vw * 0.04, sw = vw * 0.92, sy = vh * 0.28, sh = vh * 0.38;
+  const k = Math.min(1, 1400 / sw), w = Math.round(sw * k), h = Math.round(sh * k);
+  grab.width = w; grab.height = h;
+  const g = grab.getContext("2d", { willReadFrequently: true });
+  g.save(); g.fillStyle = "#fff"; g.fillRect(0, 0, w, h); g.translate(w / 2, h / 2); g.rotate((turn * Math.PI) / 180);
+  g.drawImage(video, sx, sy, sw, sh, -w / 2, -h / 2, w, h); g.restore();
+  return grab;
+}
+async function scanLoop() {
+  const video = $("scanVideo"), turns = [0, 3, -3, 6, -6];
+  let tick = 0;
+  while (scanning) {
+    let text = null;
+    if (video.readyState >= 2) {
+      if (native) {
+        try { const hits = await native.detect(video); if (hits.length) text = hits[0].rawValue; } catch { /* next frame */ }
+      } else if (zx) {
+        try {
+          const Z = window.ZXing;
+          text = zx.decode(new Z.BinaryBitmap(new Z.HybridBinarizer(new Z.HTMLCanvasElementLuminanceSource(band(video, turns[tick++ % turns.length]))))).getText();
+        } catch { /* nothing in this frame */ }
+      }
+    }
+    const id = text && (/\d{12}/.exec(text.replace(/\s/g, "")) || [])[0];
+    if (id) { await found(id); return; }
+    await new Promise((r) => setTimeout(r, native ? 90 : 160));
+  }
+}
+async function found(id) {
+  scanning = false;
+  $("scanFrame").classList.add("found");
+  try { navigator.vibrate && navigator.vibrate(60); } catch { /* optional */ }
+  const { data, error } = await sb.from("memories").select("*").eq("id", id).maybeSingle();
+  $("scanFrame").classList.remove("found");
+  if (error || !data) {
+    say($("scanHint"), `${prettyId(id)} is not in your library.`, true);
+    setTimeout(() => { if (view === "scan") { say($("scanHint"), "Hold the memory code inside the frame, along the line."); scanning = true; scanLoop(); } }, 2500);
+    return;
+  }
+  await play(data, "Scanned");
+  const resume = () => { if (view === "scan") { scanning = true; scanLoop(); } };
+  const watch = new MutationObserver(() => { if ($("sheet").hidden) { watch.disconnect(); resume(); } });
+  watch.observe($("sheet"), { attributes: true, attributeFilter: ["hidden"] });
+}
+
+// ---------------------------------------------------------------- library
+async function loadLibrary() {
+  const list = $("list");
+  const { data, error } = await sb.from("memories").select("*").order("recorded_at", { ascending: false });
+  if (error) { list.replaceChildren(el("p", { class: "status err" }, "The library can't be reached: " + error.message)); return; }
+  if (!data.length) { list.replaceChildren(el("p", { class: "status" }, "No memories yet. Capture one, or add one from files below.")); return; }
+  const thumbs = await sb.storage.from(BUCKET).createSignedUrls(data.map((r) => r.photo_path).filter(Boolean), 3600);
+  const byPath = new Map((thumbs.data || []).map((t) => [t.path, t.signedUrl]));
+  list.replaceChildren(...data.map((row) => {
+    const b = el("button", { class: "row", type: "button" });
+    const img = el("img", { alt: "" }); if (byPath.get(row.photo_path)) img.src = byPath.get(row.photo_path);
+    const txt = el("div");
+    txt.append(el("div", { class: "p" }, row.place || "Untitled"), el("div", { class: "d mono" }, prettyId(row.id)));
+    if (row.souvenir) txt.append(el("div", { class: "d" }, row.souvenir));
+    b.append(img, txt);
+    b.addEventListener("click", () => play(row, "Library"));
+    return b;
+  }));
+}
+
+// adding an existing recording: the time comes from the file name when the camera wrote it there
+function timeFromName(name) {
+  let m = /(\d{4})(\d{2})(\d{2})[_-](\d{2})(\d{2})(\d{2})/.exec(name);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}`;
+  m = /(\d{4})-(\d{2})-(\d{2})[ T_](\d{2})[.:](\d{2})(?:[.:](\d{2}))?/.exec(name);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6] || "00"}`;
+  return "";
+}
+function idFromInput(v) { const d = new Date(v); return isNaN(d) ? "" : idFromDate(d); }
+$("addVideo").addEventListener("change", (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  const t = timeFromName(f.name) || new Date(f.lastModified - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 19);
+  $("addTime").value = t; $("addTime").dispatchEvent(new Event("input"));
+});
+$("addTime").addEventListener("input", () => { const id = idFromInput($("addTime").value); $("addId").textContent = id ? "Code " + prettyId(id) : ""; });
+$("addPlace").value = placeName();
+async function frameOf(file) {
+  const v = document.createElement("video");
+  v.muted = true; v.playsInline = true; v.src = URL.createObjectURL(file);
+  await new Promise((ok, bad) => { v.onloadeddata = ok; v.onerror = bad; });
+  v.currentTime = Math.min(1, v.duration / 2 || 0);
+  await new Promise((ok) => (v.onseeked = ok));
+  const c = document.createElement("canvas"); c.width = v.videoWidth; c.height = v.videoHeight;
+  c.getContext("2d").drawImage(v, 0, 0);
+  return toBlob(c, "image/jpeg", 0.9);
+}
+$("addForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const st = $("addStatus"), btn = $("addSave");
+  const video = $("addVideo").files[0], photoFile = $("addPhoto").files[0];
+  const id = idFromInput($("addTime").value);
+  if (!video || !id) { say(st, "Choose a video and set the time, including seconds.", true); return; }
+  btn.disabled = true;
+  try {
+    say(st, "Reading the sound…");
+    const { env, seconds } = await outlineFromFile(video);
+    const photoBlob = photoFile || (await frameOf(video));
+    const photo = await createImageBitmap(photoBlob);
+    say(st, "Making the label…");
+    const place = ($("addPlace").value || placeName()).trim().toUpperCase();
+    const drawn = await drawLabel({ env, photo, id, place, seconds, ...settings() });
+    say(st, "Uploading…");
+    await saveMemory({ id, env, seconds, photoBlob, videoBlob: video, labelBlob: await toBlob(drawn.label), place, souvenir: $("addSouvenir").value.trim(), recordedAt: dateFromId(id) });
+    say(st, `Saved as ${prettyId(id)}.`);
+    e.target.reset(); $("addPlace").value = placeName(); $("addId").textContent = "";
+    loadLibrary();
+  } catch (err) {
+    say(st, "Saving failed: " + (err.message || err), true);
+  } finally { btn.disabled = false; }
+});
+$("setDpi").value = store.get("dpi", "203");
+$("setSize").value = store.get("size", "compact");
+$("setDpi").addEventListener("change", (e) => store.set("dpi", e.target.value));
+$("setSize").addEventListener("change", (e) => store.set("size", e.target.value));
+$("signOut").addEventListener("click", () => sb.auth.signOut());
+
+// ---------------------------------------------------------------- sign in
+$("authForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  say($("authStatus"), "Signing in…");
+  const { error } = await sb.auth.signInWithPassword({ email: $("email").value, password: $("password").value });
+  if (error) say($("authStatus"), error.message, true);
+});
+$("signUp").addEventListener("click", async () => {
+  if (!$("authForm").reportValidity()) return;
+  say($("authStatus"), "Creating the account…");
+  const { data, error } = await sb.auth.signUp({ email: $("email").value, password: $("password").value });
+  if (error) say($("authStatus"), error.message, true);
+  else if (!data.session) say($("authStatus"), "Check your email to confirm the account, then sign in.");
+});
+
+// ---------------------------------------------------------------- views
+async function show(next) {
+  view = next;
+  closeSheet();
+  scanning = false; stopCamera();
+  for (const v of ["auth", "capture", "scan", "library"]) $(v).hidden = v !== next;
+  $("tabs").hidden = next === "auth";
+  document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-current", t.dataset.view === next ? "page" : "false"));
+  if (next !== "auth") try { history.replaceState(null, "", "#" + next); } catch { /* optional */ }
+  if (next === "capture") {
+    showPlace();
+    try { await startCamera($("capVideo"), true); } catch (e) { cameraError(e, capHint); }
+  } else if (next === "scan") {
+    try {
+      await startCamera($("scanVideo"), false);
+      await readers();
+      scanning = true; scanLoop();
+    } catch (e) { cameraError(e, $("scanHint")); }
+  } else if (next === "library") {
+    loadLibrary();
+  }
+}
+document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => show(t.dataset.view)));
+document.addEventListener("visibilitychange", () => { if (document.hidden) { scanning = false; } else if (view === "scan" && $("sheet").hidden && stream) { scanning = true; scanLoop(); } });
+
+sb.auth.onAuthStateChange((_event, session) => {
+  const was = user && user.id;
+  user = session ? session.user : null;
+  if (!user) show("auth");
+  else if (was !== user.id) show(["capture", "scan", "library"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "capture");
+});
+
+window.MV = { drawLabel, outlineFromPeaks };   // for testing the label on a computer
+</script>
+</body>
+</html>
