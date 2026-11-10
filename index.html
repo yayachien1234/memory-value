@@ -66,10 +66,7 @@ h2 { font-size: 26px; }
 .hint { margin: 0; font-size: 15px; text-shadow: 0 1px 6px rgba(0,0,0,.6); text-align: center; }
 #liveWave { position: absolute; left: 6%; right: 6%; width: 88%; height: 90px; bottom: calc(env(safe-area-inset-bottom, 0px) + 190px); }
 .count { font-family: var(--mono); font-size: 15px; color: var(--rec); }
-.labelFrame { position: absolute; border: 1.5px solid rgba(243,244,246,.9); border-radius: 6px; box-shadow: 0 0 0 100vmax rgba(13,15,19,.55); pointer-events: none; }
-.labelFrame span { position: absolute; left: 0; top: -24px; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
-.frame { position: absolute; left: 5%; right: 5%; top: 32%; height: 30%; border-radius: 14px; outline: 1.5px solid rgba(243,244,246,.85); box-shadow: 0 0 0 100vmax rgba(13,15,19,.45); pointer-events: none; }
-.frame::after { content: ""; position: absolute; left: 6%; right: 6%; top: 50%; height: 1px; background: var(--accent); }
+.frame { position: absolute; left: 6%; right: 6%; top: 18%; height: 52%; border-radius: 14px; outline: 1.5px solid rgba(243,244,246,.85); box-shadow: 0 0 0 100vmax rgba(13,15,19,.35); pointer-events: none; }
 .frame.found { outline-color: var(--found); }
 
 /* tabs */
@@ -82,7 +79,7 @@ nav { position: fixed; left: 0; right: 0; bottom: 0; display: grid; grid-templat
 .sheet { position: fixed; inset: 0; z-index: 30; background: var(--night); overflow-y: auto; }
 .sheet .inner { max-width: 34rem; margin: 0 auto; padding-top: calc(env(safe-area-inset-top, 0px) + 18px); padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 40px); display: grid; gap: 18px; }
 .sheet header { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-.labelimg { width: 100%; background: #fff; border-radius: 6px; image-rendering: pixelated; display: block; }
+.labelimg { max-width: 100%; max-height: 58vh; width: auto; margin: 0 auto; background: #fff; border-radius: 6px; image-rendering: pixelated; display: block; }
 .sheet video, .sheet .photo { width: 100%; border-radius: 12px; background: #000; display: block; max-height: 62vh; object-fit: contain; }
 .actions { display: flex; gap: 10px; flex-wrap: wrap; }
 dl.meta { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; font-size: 14px; }
@@ -125,14 +122,13 @@ details summary { cursor: pointer; font-weight: 500; }
 <!-- capture -->
 <section id="capture" class="cam" hidden>
   <video id="capVideo" playsinline muted autoplay></video>
-  <div class="labelFrame" id="labelFrame"><span>On the label</span></div>
   <div class="top gutter">
     <button class="chip" id="placeChip" type="button" aria-label="Change the place">HONG KONG</button>
     <button class="chip" id="flip" type="button">Flip</button>
   </div>
   <canvas id="liveWave" hidden></canvas>
   <div class="bottom gutter">
-    <p class="hint" id="capHint">Frame the picture in the box, then press once: a photo, then 10 seconds of sound and video.</p>
+    <p class="hint" id="capHint">Hold the phone the way you want the photo. Press once: a photo, then 10 seconds of sound and video.</p>
     <button class="shutter" id="shutter" type="button" aria-label="Take the photo and start recording"></button>
   </div>
 </section>
@@ -142,7 +138,7 @@ details summary { cursor: pointer; font-weight: 500; }
   <video id="scanVideo" playsinline muted autoplay></video>
   <div class="frame" id="scanFrame"></div>
   <div class="bottom gutter">
-    <p class="hint" id="scanHint">Hold the memory code inside the frame, along the line.</p>
+    <p class="hint" id="scanHint">Fill the frame with the label, upright or sideways.</p>
   </div>
 </section>
 
@@ -166,9 +162,6 @@ details summary { cursor: pointer; font-weight: 500; }
           <label>Place <input id="addPlace" placeholder="HONG KONG"></label>
           <label>Souvenir <input id="addSouvenir" placeholder="What was bought"></label>
         </div>
-        <label>Part of the photo on the label
-          <select id="addCrop"><option value="0.05">Top</option><option value="0.5" selected>Middle</option><option value="0.95">Bottom</option></select>
-        </label>
         <button class="btn" type="submit" id="addSave">Save memory</button>
         <p class="status" id="addStatus" role="status" aria-live="polite"></p>
       </form>
@@ -179,9 +172,6 @@ details summary { cursor: pointer; font-weight: 500; }
       <div class="grid2">
         <label>Resolution
           <select id="setDpi"><option value="203">203 dpi (most pocket printers)</option><option value="300">300 dpi</option></select>
-        </label>
-        <label>Label size
-          <select id="setSize"><option value="compact">72 × 36 mm</option><option value="big">96 × 48 mm</option></select>
         </label>
         <label>Photo style
           <select id="setBg"><option value="local">Detail</option><option value="balanced">Bold</option><option value="dots">Dots</option><option value="solid">Original</option></select>
@@ -281,10 +271,7 @@ function smoothOutline(env) {
 }
 
 const PRINTERS = { 203: { head: 384, narrow: 2, wide: 5 }, 300: { head: 576, narrow: 3, wide: 7 } };
-const SIZES = {   // millimetres; the photo stops above the band that holds the ruler and the words
-  compact: { W: 72, H: () => 36, HALF: 10.5, CY: 13.75, TOP: 28.4, PHOTO: 27.05 },
-  big:     { W: 96, H: (ppm, head) => head / ppm, HALF: 14, CY: 19, TOP: 39.3, PHOTO: 38.4 },
-};
+const STRIP_MM = 13;   // the plain band for place, date and time, below an upright photo or beside a wide one
 
 // Turning the photo into pure black and white. A thermal head has no grey, so each style is a
 // different answer to "which dots get ink". All of them adapt to the photo's own light.
@@ -331,116 +318,127 @@ function photoInk(grey, W, H, ppm, style) {
   return out;
 }
 
-// width : height of the picture area on a label, so the viewfinder can show the same frame
-function photoAspect(size) { return SIZES[size].W / SIZES[size].PHOTO; }
+// a quarter turn of a canvas
+function turn(src, clockwise) {
+  const c = document.createElement("canvas");
+  c.width = src.height; c.height = src.width;
+  const g = c.getContext("2d");
+  if (clockwise) { g.translate(c.width, 0); g.rotate(Math.PI / 2); } else { g.translate(0, c.height); g.rotate(-Math.PI / 2); }
+  g.drawImage(src, 0, 0);
+  return c;
+}
 
-async function drawLabel({ env, photo, id, place, seconds, dpi = 203, size = "compact", bgStyle = "local", crop = null, cropY = 0.5 }) {
-  const P = PRINTERS[dpi], ppm = dpi / 25.4, G = SIZES[size];
-  const W = Math.round(G.W * ppm), H = Math.round(G.H(ppm, P.head) * ppm);
-  const code = code39Bars("MV-" + id, P.narrow, P.wide);
-  const L = code.length, pad = Math.round((W - L) / 2);
-  const cy = Math.round(G.CY * ppm), half = G.HALF * ppm, floor = 0.8 * ppm;
+// The label follows the photo: held upright, the photo stands and the waveform runs down it;
+// held sideways, the photo lies and the waveform runs across. Either way the whole photo is used
+// and the sticker is the same size on the roll: the paper's width by about 77 mm.
+async function drawLabel({ env, photo, id, place, seconds, dpi = 203, bgStyle = "local" }) {
+  const P = PRINTERS[dpi], ppm = dpi / 25.4;
+  const portrait = !photo || photo.height > photo.width;
+  // everything is drawn lying down (code left to right), then stood up for an upright photo
+  const WW = Math.round((P.head * 4) / 3), HH = P.head;            // the photo: 4:3, 64 x 48 mm
+  const code = code39Bars(id, P.narrow, P.wide);
+  const L = code.length, pad = Math.round((WW - L) / 2);
+  const cy = Math.round(HH / 2), half = Math.min(17 * ppm, HH / 2 - 2 * ppm), floor = 0.8 * ppm;
   const outline = smoothOutline(env);
   const hAt = (c) => Math.max(outline[Math.min(1999, Math.floor((c / L) * 1999))] * half, floor);
 
   // 1. the waveform, then the code's spaces cut right through it
-  const ink = new Uint8Array(W * H);
+  const ink = new Uint8Array(WW * HH);
   for (let c = 0; c < L; c++) {
-    const h = hAt(c), y0 = Math.max(0, Math.round(cy - h)), y1 = Math.min(H - 1, Math.round(cy + h));
-    for (let y = y0; y <= y1; y++) ink[y * W + pad + c] = 1;
+    const h = hAt(c), y0 = Math.max(0, Math.round(cy - h)), y1 = Math.min(HH - 1, Math.round(cy + h));
+    for (let y = y0; y <= y1; y++) ink[y * WW + pad + c] = 1;
   }
   const gaps = [];
   for (let k = 0; k < code.bars.length - 1; k++) gaps.push([code.bars[k][1], code.bars[k + 1][0]]);
-  for (const [s0, s1] of gaps) for (let c = s0; c < s1; c++) for (let y = 0; y < H; y++) ink[y * W + pad + c] = 0;
+  for (const [s0, s1] of gaps) for (let c = s0; c < s1; c++) for (let y = 0; y < HH; y++) ink[y * WW + pad + c] = 0;
 
-  // 2. the photo, in solid black and white, kept out of the code's own white
+  // 2. the whole photo, in pure black and white, kept out of the code's own white
   let bg = null;
   if (photo) {
-    const ph = Math.round(G.PHOTO * ppm);
-    // the part of the photo that was inside the frame on the viewfinder; otherwise a band at `cropY`
-    const big = document.createElement("canvas");
-    big.width = W; big.height = ph;
-    const bgx = big.getContext("2d", { willReadFrequently: true });
-    const pw = photo.width, phh = photo.height, want = W / ph;
-    let sx, sy, sw, sh;
-    if (crop) { sx = crop.x * pw; sy = crop.y * phh; sw = crop.w * pw; sh = crop.h * phh; }
-    else {
-      sw = pw; sh = pw / want;
-      if (sh > phh) { sh = phh; sw = phh * want; }
-      sx = (pw - sw) / 2; sy = (phh - sh) * cropY;
+    let src = photo;
+    if (portrait) {                                                   // its top goes where the recording starts
+      const c = document.createElement("canvas"); c.width = photo.width; c.height = photo.height;
+      c.getContext("2d").drawImage(photo, 0, 0);
+      src = turn(c, false);
     }
-    bgx.imageSmoothingQuality = "high";
-    bgx.drawImage(photo, sx, sy, sw, sh, 0, 0, W, ph);
-    const px = bgx.getImageData(0, 0, W, ph).data;
-    const grey = new Uint8Array(W * ph), hist = new Uint32Array(256);
-    for (let i = 0; i < W * ph; i++) { const g = (px[i * 4] * 299 + px[i * 4 + 1] * 587 + px[i * 4 + 2] * 114) / 1000 | 0; grey[i] = g; hist[g]++; }
+    const work = document.createElement("canvas");
+    work.width = WW; work.height = HH;
+    const wg = work.getContext("2d", { willReadFrequently: true });
+    const pw = src.width, ph = src.height, want = WW / HH;
+    let sw = pw, sh = pw / want;                                      // a 4:3 photo fits exactly; others lose only their edges
+    if (sh > ph) { sh = ph; sw = ph * want; }
+    wg.imageSmoothingQuality = "high";
+    wg.drawImage(src, (pw - sw) / 2, (ph - sh) / 2, sw, sh, 0, 0, WW, HH);
+    const px = wg.getImageData(0, 0, WW, HH).data;
+    const grey = new Uint8Array(WW * HH), hist = new Uint32Array(256);
+    for (let i = 0; i < WW * HH; i++) { const v = (px[i * 4] * 299 + px[i * 4 + 1] * 587 + px[i * 4 + 2] * 114) / 1000 | 0; grey[i] = v; hist[v]++; }
     let lo = 0, hi = 255, acc = 0;                                   // stretch the tones, ignoring the 2 % at each end
-    const cut = W * ph * 0.02;
+    const cut = WW * HH * 0.02;
     for (; lo < 255 && (acc += hist[lo]) < cut; lo++);
     acc = 0;
     for (; hi > 0 && (acc += hist[hi]) < cut; hi--);
     const span = Math.max(1, hi - lo);
-    for (let i = 0; i < W * ph; i++) grey[i] = Math.max(0, Math.min(255, ((grey[i] - lo) * 255) / span));
-    bg = new Uint8Array(W * H);
-    bg.set(photoInk(grey, W, ph, ppm, bgStyle));
-    // clean reading line through the middle, across the whole label
-    const band = Math.max(2, Math.round(0.8 * ppm));
-    for (let y = cy - band; y <= cy + band; y++) for (let x = 0; x < W; x++) bg[y * W + x] = 0;
-    // each slit cleared as tall as the taller bar beside it
-    for (const [s0, s1] of gaps) {
+    for (let i = 0; i < WW * HH; i++) grey[i] = Math.max(0, Math.min(255, ((grey[i] - lo) * 255) / span));
+    bg = photoInk(grey, WW, HH, ppm, bgStyle);
+    const band = Math.max(2, Math.round(0.8 * ppm));                 // a clean reading line along the code
+    for (let y = cy - band; y <= cy + band; y++) for (let x = 0; x < WW; x++) bg[y * WW + x] = 0;
+    for (const [s0, s1] of gaps) {                                    // each slit cleared as tall as the taller bar beside it
       const h = Math.max(hAt(Math.max(0, s0 - 1)), hAt(Math.min(L - 1, s1)));
-      for (let c = s0; c < s1; c++) for (let y = Math.max(0, Math.round(cy - h)); y <= Math.min(ph - 1, Math.round(cy + h)); y++) bg[y * W + pad + c] = 0;
+      for (let c = s0; c < s1; c++) for (let y = Math.max(0, Math.round(cy - h)); y <= Math.min(HH - 1, Math.round(cy + h)); y++) bg[y * WW + pad + c] = 0;
     }
   }
-
-  // 3. paint, then the ruler and words, then force everything to pure black or white
-  const canvas = document.createElement("canvas");
-  canvas.width = W; canvas.height = H;
-  const g = canvas.getContext("2d", { willReadFrequently: true });
-  const img = g.createImageData(W, H);
-  for (let i = 0; i < W * H; i++) {
+  const picture = document.createElement("canvas");
+  picture.width = WW; picture.height = HH;
+  const pg = picture.getContext("2d");
+  const img = pg.createImageData(WW, HH);
+  for (let i = 0; i < WW * HH; i++) {
     const v = ink[i] || (bg && bg[i]) ? 0 : 255;
     img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v; img.data[i * 4 + 3] = 255;
   }
-  g.putImageData(img, 0, 0);
+  pg.putImageData(img, 0, 0);
 
-  await Promise.all([document.fonts.load(`500 ${Math.round(1.8 * ppm)}px "IBM Plex Mono"`), document.fonts.load(`500 ${Math.round(2 * ppm)}px Jost`)]).catch(() => {});
-  g.fillStyle = "#000"; g.textBaseline = "top";
-  const top = G.TOP * ppm, tick = Math.max(1, Math.round(0.12 * ppm));
-  for (let s = 0; s <= seconds; s += 5) g.fillRect(pad + Math.round((s / seconds) * L), top, tick, (s ? 0.9 : 1.4) * ppm);
-  g.fillRect(pad + L - tick, top, tick, 1.4 * ppm);
+  // 3. the words, on their own white band
+  const strip = Math.round(STRIP_MM * ppm);
+  const words = document.createElement("canvas");
+  words.width = P.head; words.height = strip;
+  const t = words.getContext("2d");
+  t.fillStyle = "#fff"; t.fillRect(0, 0, words.width, words.height);
+  await Promise.all([document.fonts.load(`500 ${Math.round(2 * ppm)}px "IBM Plex Mono"`), document.fonts.load(`500 ${Math.round(2.4 * ppm)}px Jost`)]).catch(() => {});
+  t.fillStyle = "#000"; t.textBaseline = "top";
   const spaced = (text, x, y, font, track, right = false) => {
-    g.font = font;
-    const width = [...text].reduce((w, ch) => w + g.measureText(ch).width + track, -track);
+    t.font = font;
+    const width = [...text].reduce((w, ch) => w + t.measureText(ch).width + track, -track);
     let cx = right ? x - width : x;
-    for (const ch of text) { g.fillText(ch, cx, y); cx += g.measureText(ch).width + track; }
+    for (const ch of text) { t.fillText(ch, cx, y); cx += t.measureText(ch).width + track; }
   };
   const start = dateFromId(id), end = new Date(start.getTime() + Math.round(seconds) * 1000);
-  const t = (d) => `${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`;
-  const mono = `500 ${Math.round(1.8 * ppm)}px "IBM Plex Mono", monospace`, word = `500 ${Math.round(2 * ppm)}px Jost, sans-serif`;
-  spaced(t(start), pad, top + 1.7 * ppm, mono, 0.1 * ppm);
-  spaced(t(end), pad + L, top + 1.7 * ppm, mono, 0.1 * ppm, true);
-  spaced((place || "").toUpperCase(), pad, top + 4.3 * ppm, word, 0.55 * ppm);
-  spaced(`${id.slice(0, 2)}.${id.slice(2, 4)}.${id.slice(4, 6)}`, pad + L, top + 4.3 * ppm, mono, 0.15 * ppm, true);
-  const done = g.getImageData(0, 0, W, H);
+  const hms = (d) => `${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`;
+  const mono = `500 ${Math.round(2 * ppm)}px "IBM Plex Mono", monospace`, word = `500 ${Math.round(2.4 * ppm)}px Jost, sans-serif`;
+  const m = 2.5 * ppm;
+  spaced((place || "").toUpperCase(), m, 2.4 * ppm, word, 0.6 * ppm);
+  spaced(`${id.slice(0, 2)}.${id.slice(2, 4)}.${id.slice(4, 6)}`, P.head - m, 2.6 * ppm, mono, 0.15 * ppm, true);
+  spaced(`${hms(start)} – ${hms(end)}`, m, 6.8 * ppm, mono, 0.1 * ppm);
+
+  // 4. put it together the way the photo was held
+  const label = document.createElement("canvas");
+  const lg = () => label.getContext("2d", { willReadFrequently: true });
+  if (portrait) {
+    label.width = P.head; label.height = WW + strip;
+    lg().drawImage(turn(picture, true), 0, 0);
+    lg().drawImage(words, 0, WW);
+  } else {
+    label.width = WW + strip; label.height = P.head;
+    lg().drawImage(picture, 0, 0);
+    lg().drawImage(turn(words, false), WW, 0);                      // the words read upwards along the edge
+  }
+  const done = lg().getImageData(0, 0, label.width, label.height);   // the text is the only grey: force pure black or white
   for (let i = 0; i < done.data.length; i += 4) {
     const v = done.data[i] + done.data[i + 1] + done.data[i + 2] < 384 ? 0 : 255;
     done.data[i] = done.data[i + 1] = done.data[i + 2] = v;
   }
-  g.putImageData(done, 0, 0);
-
-  // 4. the same label turned to run along the paper, exactly as wide as the print head
-  const roll = document.createElement("canvas");
-  roll.width = P.head; roll.height = W;
-  const r = roll.getContext("2d");
-  r.fillStyle = "#fff"; r.fillRect(0, 0, roll.width, roll.height);
-  const x0 = Math.floor((P.head - H) / 2);
-  r.save(); r.translate(x0, W); r.rotate(-Math.PI / 2); r.drawImage(canvas, 0, 0); r.restore();
-  if (H < P.head) {                                                     // cut marks for a label narrower than the paper
-    r.fillStyle = "#000"; const m = Math.round(1.5 * ppm);
-    r.fillRect(x0 - m, 0, m, 1); r.fillRect(x0 + H, 0, m, 1); r.fillRect(x0 - m, W - 1, m, 1); r.fillRect(x0 + H, W - 1, m, 1);
-  }
-  return { label: canvas, roll };
+  lg().putImageData(done, 0, 0);
+  // on the roll the image must be exactly as wide as the print head
+  return { label, roll: portrait ? label : turn(label, true), portrait };
 }
 const toBlob = (canvas, type = "image/png", q) => new Promise((ok) => canvas.toBlob(ok, type, q));
 
@@ -508,30 +506,12 @@ $("flip").addEventListener("click", async () => {
   try { await startCamera($("capVideo"), true); } catch (e) { cameraError(e, capHint); }
 });
 
-// The box on the viewfinder has the label's own proportions: what is inside it is what the label shows.
-function layoutFrame() {
-  const ar = photoAspect(settings().size), f = $("labelFrame");
-  let w = innerWidth * 0.92, h = w / ar;
-  if (h > innerHeight * 0.5) { h = innerHeight * 0.5; w = h * ar; }
-  Object.assign(f.style, { width: w + "px", height: h + "px", left: (innerWidth - w) / 2 + "px", top: innerHeight * 0.42 - h / 2 + "px" });
-}
-addEventListener("resize", layoutFrame);
-// where that box falls on the camera's own picture (the viewfinder crops the picture to fill the screen)
-function cropFromFrame(video) {
-  const vw = video.videoWidth, vh = video.videoHeight, vr = video.getBoundingClientRect(), r = $("labelFrame").getBoundingClientRect();
-  const s = Math.max(vr.width / vw, vr.height / vh), ox = (vr.width - vw * s) / 2, oy = (vr.height - vh * s) / 2;
-  let x = (r.left - vr.left - ox) / s, y = (r.top - vr.top - oy) / s, w = r.width / s, h = r.height / s;
-  x = Math.max(0, x); y = Math.max(0, y); w = Math.min(vw - x, w); h = Math.min(vh - y, h);
-  return { x: x / vw, y: y / vh, w: w / vw, h: h / vh };
-}
-
 let busy = false;
 shutter.addEventListener("click", async () => {
   if (busy || !stream) return;
   busy = true;
   const moment = new Date(), id = idFromDate(moment);
   const video = $("capVideo");
-  const crop = cropFromFrame(video);
   // the photo: this exact frame
   const shot = document.createElement("canvas");
   shot.width = video.videoWidth; shot.height = video.videoHeight;
@@ -587,8 +567,8 @@ shutter.addEventListener("click", async () => {
   const photo = await createImageBitmap(photoBlob);
   const env = outlineFromPeaks(peaks);
   busy = false;
-  say(capHint, "Frame the picture in the box, then press once: a photo, then 10 seconds of sound and video.");
-  review({ id, env, seconds, photo, photoBlob, videoBlob, crop });
+  say(capHint, "Hold the phone the way you want the photo. Press once: a photo, then 10 seconds of sound and video.");
+  review({ id, env, seconds, photo, photoBlob, videoBlob });
 });
 
 // ---------------------------------------------------------------- review and save
@@ -602,7 +582,7 @@ function closeSheet() {
   $("sheet").hidden = true;
   $("sheetBody").querySelectorAll("video").forEach((v) => v.pause());
 }
-function settings() { return { dpi: +store.get("dpi", "203"), size: store.get("size", "compact"), bgStyle: store.get("bg", "local") }; }
+function settings() { return { dpi: +store.get("dpi", "203"), bgStyle: store.get("bg", "local") }; }
 const BG_STYLES = [["local", "Detail"], ["balanced", "Bold"], ["dots", "Dots"], ["solid", "Original"]];
 
 async function review(m) {
@@ -671,7 +651,7 @@ async function saveMemory(m) {
   const { error } = await sb.from("memories").upsert({
     id: m.id, recorded_at: m.recordedAt.toISOString(), place: m.place, souvenir: m.souvenir || null,
     // the outline, how long it lasts, and which part of the photo the label uses
-    envelope: { seconds: Math.round(m.seconds * 10) / 10, points: m.env, crop: m.crop || null, cropY: m.cropY ?? 0.5 },
+    envelope: { seconds: Math.round(m.seconds * 10) / 10, points: m.env },
     photo_path, video_path, video_type: m.videoBlob.type, label_path,
   });
   if (error) throw error;
@@ -725,7 +705,7 @@ async function play(row, via) {
   try {
     const photo = p ? await createImageBitmap(await (await fetch(p)).blob()) : null;
     const outline = row.envelope || {};
-    const drawn = await drawLabel({ env: outline.points || [], photo, id: row.id, place: row.place, seconds: outline.seconds || RECORD_SECONDS, ...settings(), crop: outline.crop || null, cropY: outline.cropY ?? 0.5 });
+    const drawn = await drawLabel({ env: outline.points || [], photo, id: row.id, place: row.place, seconds: outline.seconds || RECORD_SECONDS, ...settings() });
     label.src = drawn.label.toDataURL();
     actions.append(...labelButtons(row.id, drawn));
   } catch { /* the stored label still shows */ }
@@ -749,17 +729,24 @@ async function readers() {
   }
 }
 const grab = document.createElement("canvas");
+// A strip of the picture for the fallback reader, which only reads across: a band across the
+// middle, slightly turned, or (turn = 90) a band down the middle laid on its side for an upright label.
 function band(video, turn) {
-  const vw = video.videoWidth, vh = video.videoHeight, sx = vw * 0.04, sw = vw * 0.92, sy = vh * 0.28, sh = vh * 0.38;
-  const k = Math.min(1, 1400 / sw), w = Math.round(sw * k), h = Math.round(sh * k);
+  const vw = video.videoWidth, vh = video.videoHeight, upright = turn === 90;
+  const sx = upright ? vw * 0.3 : vw * 0.04, sw = upright ? vw * 0.4 : vw * 0.92;
+  const sy = upright ? vh * 0.04 : vh * 0.3, sh = upright ? vh * 0.92 : vh * 0.4;
+  const long = upright ? sh : sw, short = upright ? sw : sh;
+  const k = Math.min(1, 1400 / long), w = Math.round(long * k), h = Math.round(short * k);
   grab.width = w; grab.height = h;
   const g = grab.getContext("2d", { willReadFrequently: true });
-  g.save(); g.fillStyle = "#fff"; g.fillRect(0, 0, w, h); g.translate(w / 2, h / 2); g.rotate((turn * Math.PI) / 180);
-  g.drawImage(video, sx, sy, sw, sh, -w / 2, -h / 2, w, h); g.restore();
+  g.save(); g.fillStyle = "#fff"; g.fillRect(0, 0, w, h); g.translate(w / 2, h / 2);
+  if (upright) { g.rotate(-Math.PI / 2); g.drawImage(video, sx, sy, sw, sh, -h / 2, -w / 2, h, w); }
+  else { g.rotate((turn * Math.PI) / 180); g.drawImage(video, sx, sy, sw, sh, -w / 2, -h / 2, w, h); }
+  g.restore();
   return grab;
 }
 async function scanLoop() {
-  const video = $("scanVideo"), turns = [0, 3, -3, 6, -6];
+  const video = $("scanVideo"), turns = [0, 90, 3, -3, 90, 6, -6];
   let tick = 0;
   while (scanning) {
     let text = null;
@@ -786,7 +773,7 @@ async function found(id) {
   $("scanFrame").classList.remove("found");
   if (error || !data) {
     say($("scanHint"), `${prettyId(id)} is not in your library.`, true);
-    setTimeout(() => { if (view === "scan") { say($("scanHint"), "Hold the memory code inside the frame, along the line."); scanning = true; scanLoop(); } }, 2500);
+    setTimeout(() => { if (view === "scan") { say($("scanHint"), "Fill the frame with the label, upright or sideways."); scanning = true; scanLoop(); } }, 2500);
     return;
   }
   await play(data, "Scanned");
@@ -855,10 +842,9 @@ $("addForm").addEventListener("submit", async (e) => {
     const photo = await createImageBitmap(photoBlob);
     say(st, "Making the label…");
     const place = ($("addPlace").value || placeName()).trim().toUpperCase();
-    const cropY = +$("addCrop").value;
-    const drawn = await drawLabel({ env, photo, id, place, seconds, ...settings(), cropY });
+    const drawn = await drawLabel({ env, photo, id, place, seconds, ...settings() });
     say(st, "Uploading…");
-    await saveMemory({ id, env, seconds, cropY, photoBlob, videoBlob: video, labelBlob: await toBlob(drawn.label), place, souvenir: $("addSouvenir").value.trim(), recordedAt: dateFromId(id) });
+    await saveMemory({ id, env, seconds, photoBlob, videoBlob: video, labelBlob: await toBlob(drawn.label), place, souvenir: $("addSouvenir").value.trim(), recordedAt: dateFromId(id) });
     say(st, `Saved as ${prettyId(id)}.`);
     e.target.reset(); $("addPlace").value = placeName(); $("addId").textContent = "";
     loadLibrary();
@@ -867,9 +853,7 @@ $("addForm").addEventListener("submit", async (e) => {
   } finally { btn.disabled = false; }
 });
 $("setDpi").value = store.get("dpi", "203");
-$("setSize").value = store.get("size", "compact");
 $("setDpi").addEventListener("change", (e) => store.set("dpi", e.target.value));
-$("setSize").addEventListener("change", (e) => { store.set("size", e.target.value); layoutFrame(); });
 $("setBg").value = store.get("bg", "local");
 $("setBg").addEventListener("change", (e) => store.set("bg", e.target.value));
 $("signOut").addEventListener("click", () => sb.auth.signOut());
@@ -899,7 +883,7 @@ async function show(next) {
   document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-current", t.dataset.view === next ? "page" : "false"));
   if (next !== "auth") try { history.replaceState(null, "", "#" + next); } catch { /* optional */ }
   if (next === "capture") {
-    showPlace(); layoutFrame();
+    showPlace();
     try { await startCamera($("capVideo"), true); } catch (e) { cameraError(e, capHint); }
   } else if (next === "scan") {
     try {
@@ -921,7 +905,7 @@ sb.auth.onAuthStateChange((_event, session) => {
   else if (was !== user.id) show(["capture", "scan", "library"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "capture");
 });
 
-window.MV = { drawLabel, outlineFromPeaks };   // for testing the label on a computer
+window.MV = { drawLabel, outlineFromPeaks, band };   // for testing the label and the reader on a computer
 </script>
 </body>
 </html>
