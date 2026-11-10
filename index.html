@@ -339,7 +339,7 @@ async function drawLabel({ env, photo, id, place, seconds, dpi = 203, bgStyle = 
   const WW = Math.round((P.head * 4) / 3), HH = P.head;            // the photo: 4:3, 64 x 48 mm
   const code = code39Bars(id, P.narrow, P.wide);
   const L = code.length, pad = Math.round((WW - L) / 2);
-  const cy = Math.round(HH / 2), half = Math.min(17 * ppm, HH / 2 - 2 * ppm), floor = 0.8 * ppm;
+  const cy = Math.round(HH / 2), half = Math.min(8.5 * ppm, HH / 2 - 2 * ppm), floor = 0.8 * ppm;   // a slim spine, so the photo shows
   const outline = smoothOutline(env);
   const hAt = (c) => Math.max(outline[Math.min(1999, Math.floor((c / L) * 1999))] * half, floor);
 
