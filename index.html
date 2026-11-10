@@ -349,14 +349,8 @@ async function drawLabel({ env, photo, id, place, seconds, dpi = 203, bgStyle = 
   const L = code.length, pad = Math.round((WW - L) / 2);
   const cy = Math.round(HH / 2), half = Math.min(8.5 * ppm, HH / 2 - 2 * ppm), floor = 0.8 * ppm;   // a slim spine, so the photo shows
   const outline = smoothOutline(env);
-  // one time scale for every label: the full code is 10 seconds, so a shorter recording fills
-  // only its share and the rest stays a thin flat line (the code still needs its full length)
-  const share = Math.min(1, Math.max(0.05, seconds / RECORD_SECONDS));
-  const hAt = (c) => {
-    const u = c / L;
-    if (u > share) return floor;
-    return Math.max(outline[Math.min(1999, Math.floor((u / share) * 1999))] * half, floor);
-  };
+  // the whole recording, however long, is stretched along the whole code
+  const hAt = (c) => Math.max(outline[Math.min(1999, Math.floor((c / L) * 1999))] * half, floor);
 
   // 1. the waveform, then the code's spaces cut right through it
   const ink = new Uint8Array(WW * HH);
