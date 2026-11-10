@@ -60,6 +60,14 @@ h2 { font-size: 26px; }
 .chip { background: rgba(23,26,33,.8); border: 1px solid var(--line); border-radius: 999px; padding: 8px 14px; font-size: 14px; cursor: pointer; }
 .chip[aria-pressed="true"] { background: var(--paper); color: var(--night); border-color: var(--paper); }
 .cam .bottom { position: absolute; left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom, 0px) + 74px); display: grid; justify-items: center; gap: 12px; }
+/* if the screen does turn sideways, the shutter moves to the middle of the right edge, like a camera */
+@media (orientation: landscape) and (max-height: 600px) {
+  #capture .bottom { left: auto; right: max(20px, env(safe-area-inset-right, 0px)); top: 50%; bottom: auto; transform: translateY(-50%); width: min(11rem, 30vw); }
+  #liveWave { left: 6%; right: auto; width: 60%; bottom: auto; top: 40%; }
+}
+.turned { position: relative; width: 100%; max-height: 62vh; overflow: hidden; border-radius: 12px; background: #000; cursor: pointer; }
+.turned video { position: absolute; left: 50%; top: 50%; max-height: none; border-radius: 0; object-fit: contain; }
+.turned span { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); font-size: 14px; background: rgba(13,15,19,.7); padding: 6px 12px; border-radius: 999px; }
 .shutter { width: 76px; height: 76px; border-radius: 50%; border: 4px solid var(--paper); background: transparent; display: grid; place-items: center; cursor: pointer; padding: 0; }
 .shutter::after { content: ""; width: 58px; height: 58px; border-radius: 50%; background: var(--paper); transition: all .2s; }
 .shutter.recording::after { width: 28px; height: 28px; border-radius: 6px; background: var(--rec); }
@@ -341,7 +349,14 @@ async function drawLabel({ env, photo, id, place, seconds, dpi = 203, bgStyle = 
   const L = code.length, pad = Math.round((WW - L) / 2);
   const cy = Math.round(HH / 2), half = Math.min(8.5 * ppm, HH / 2 - 2 * ppm), floor = 0.8 * ppm;   // a slim spine, so the photo shows
   const outline = smoothOutline(env);
-  const hAt = (c) => Math.max(outline[Math.min(1999, Math.floor((c / L) * 1999))] * half, floor);
+  // one time scale for every label: the full code is 10 seconds, so a shorter recording fills
+  // only its share and the rest stays a thin flat line (the code still needs its full length)
+  const share = Math.min(1, Math.max(0.05, seconds / RECORD_SECONDS));
+  const hAt = (c) => {
+    const u = c / L;
+    if (u > share) return floor;
+    return Math.max(outline[Math.min(1999, Math.floor((u / share) * 1999))] * half, floor);
+  };
 
   // 1. the waveform, then the code's spaces cut right through it
   const ink = new Uint8Array(WW * HH);
@@ -415,10 +430,21 @@ async function drawLabel({ env, photo, id, place, seconds, dpi = 203, bgStyle = 
   const start = dateFromId(id), end = new Date(start.getTime() + Math.round(seconds) * 1000);
   const hms = (d) => `${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`;
   const mono = `500 ${Math.round(2 * ppm)}px "IBM Plex Mono", monospace`, word = `500 ${Math.round(2.4 * ppm)}px Jost, sans-serif`;
-  const m = 2.5 * ppm;
-  spaced((place || "").toUpperCase(), m, 2.4 * ppm, word, 0.6 * ppm);
-  spaced(`${id.slice(0, 2)}.${id.slice(2, 4)}.${id.slice(4, 6)}`, P.head - m, 2.6 * ppm, mono, 0.15 * ppm, true);
+  const m = 2.5 * ppm, room = P.head - 2 * m;
+  // the place has the first line to itself: shrink the spacing, then the size; end a very long name with "…"
+  const widthOf = (text, size, track) => {
+    t.font = `500 ${Math.round(size * ppm)}px Jost, sans-serif`;
+    return [...text].reduce((w, ch) => w + t.measureText(ch).width + track * ppm, -track * ppm);
+  };
+  const fit = (text) => {
+    for (let size = 2.4; size >= 1.6; size -= 0.2) for (const track of [0.6, 0.4, 0.25, 0.1]) if (widthOf(text, size, track) <= room) return { text, size, track };
+    return null;
+  };
+  let name = (place || "").toUpperCase().trim(), fitted = fit(name);
+  while (!fitted && name.length > 1) { name = name.slice(0, -1).trimEnd(); fitted = fit(name + "…"); }
+  spaced(fitted.text, m, 2.4 * ppm, `500 ${Math.round(fitted.size * ppm)}px Jost, sans-serif`, fitted.track * ppm);
   spaced(`${hms(start)} – ${hms(end)}`, m, 6.8 * ppm, mono, 0.1 * ppm);
+  spaced(`${id.slice(0, 2)}.${id.slice(2, 4)}.${id.slice(4, 6)}`, P.head - m, 6.8 * ppm, mono, 0.15 * ppm, true);
 
   // 4. put it together the way the photo was held
   const label = document.createElement("canvas");
@@ -509,18 +535,45 @@ $("flip").addEventListener("click", async () => {
   try { await startCamera($("capVideo"), true); } catch (e) { cameraError(e, capHint); }
 });
 
+// Which way the phone is really held, even with rotation locked (the way a camera app keeps its
+// shutter in place and turns the photo instead): 0 upright, 90 turned clockwise, -90 anticlockwise.
+let tilt = 0, tiltWatched = false;
+function onTilt(e) {
+  if (e.beta == null || e.gamma == null) return;
+  if (Math.abs(e.gamma) > 50 && Math.abs(e.beta) < 40) tilt = e.gamma > 0 ? 90 : -90;
+  else if (Math.abs(e.beta) > 50) tilt = 0;
+}
+async function watchTilt(fromTap) {
+  if (tiltWatched) return;
+  const ask = window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === "function";
+  if (ask && !fromTap) return;                                       // an iPhone asks first, and only from a tap
+  try {
+    if (ask && (await DeviceOrientationEvent.requestPermission()) !== "granted") return;
+    addEventListener("deviceorientation", onTilt);
+    tiltWatched = true;
+  } catch { /* no sensor: photos stay as the camera gives them */ }
+}
+// how far the screen itself has turned with the phone (0 when rotation is locked)
+function screenTurn() {
+  const a = (screen.orientation && screen.orientation.angle) ?? window.orientation ?? 0;
+  return a === 90 ? -90 : a === 270 || a === -90 ? 90 : 0;
+}
+
 let busy = false;
 shutter.addEventListener("click", async () => {
   if (busy || !stream) return;
   busy = true;
+  watchTilt(true);
   const moment = new Date(), id = idFromDate(moment);
   const video = $("capVideo");
-  // the photo: this exact frame
-  const shot = document.createElement("canvas");
+  // the photo: this exact frame, turned upright if the phone was held sideways with the screen locked
+  const rotate = tilt - screenTurn();
+  let shot = document.createElement("canvas");
   shot.width = video.videoWidth; shot.height = video.videoHeight;
   const sg = shot.getContext("2d");
   if (video.classList.contains("mirror")) { sg.translate(shot.width, 0); sg.scale(-1, 1); }   // keep the photo as it looked
   sg.drawImage(video, 0, 0);
+  if (rotate) shot = turn(shot, rotate > 0);
   const photoBlob = await toBlob(shot, "image/jpeg", 0.9);
 
   // then the sound and video
@@ -573,7 +626,7 @@ shutter.addEventListener("click", async () => {
   const env = outlineFromPeaks(peaks);
   busy = false;
   say(capHint, "Hold the phone the way you want the photo. Press once: a photo, then 10 seconds of sound and video.");
-  review({ id, env, seconds, photo, photoBlob, videoBlob });
+  review({ id, env, seconds, photo, photoBlob, videoBlob, rotate });
 });
 
 // ---------------------------------------------------------------- review and save
@@ -603,6 +656,7 @@ async function review(m) {
   const l2 = el("label", {}, "Souvenir"); l2.append(souvenir);
   fields.append(l1, l2);
   const vid = el("video", { controls: "", playsinline: "" }); vid.src = URL.createObjectURL(m.videoBlob);
+  const vidBox = upright(vid, m.rotate);
   const save = el("button", { class: "btn", type: "button" }, "Save memory");
   const status = el("p", { class: "status", role: "status", "aria-live": "polite" });
   const actions = el("div", { class: "actions" }); actions.append(save);
@@ -618,7 +672,7 @@ async function review(m) {
     return b;
   });
   styles.append(...styleButtons);
-  body.append(head, img, styles, fields, actions, status, vid);
+  body.append(head, img, styles, fields, actions, status, vidBox);
 
   let current;
   const render = async () => {
@@ -656,7 +710,8 @@ async function saveMemory(m) {
   const { error } = await sb.from("memories").upsert({
     id: m.id, recorded_at: m.recordedAt.toISOString(), place: m.place, souvenir: m.souvenir || null,
     // the outline, how long it lasts, and which part of the photo the label uses
-    envelope: { seconds: Math.round(m.seconds * 10) / 10, points: m.env },
+    // the outline, how long it lasts, and how far the video must turn to stand upright
+    envelope: { seconds: Math.round(m.seconds * 10) / 10, points: m.env, rotate: m.rotate || 0 },
     photo_path, video_path, video_type: m.videoBlob.type, label_path,
   });
   if (error) throw error;
@@ -686,6 +741,28 @@ async function signed(path) {
   const { data } = await sb.storage.from(BUCKET).createSignedUrl(path, 3600);
   return data ? data.signedUrl : null;
 }
+// A video recorded with the phone sideways and the screen locked is stored on its side:
+// show it turned upright. Its own controls would turn with it, so a tap plays and pauses instead.
+function upright(vid, deg) {
+  if (!deg) return vid;
+  vid.removeAttribute("controls");
+  const box = el("div", { class: "turned" });
+  const hint = el("span", {}, "Tap to play");
+  box.append(vid, hint);
+  vid.style.transform = `translate(-50%, -50%) rotate(${deg}deg)`;
+  const size = () => {
+    if (!vid.videoWidth) return;
+    box.style.aspectRatio = `${vid.videoHeight} / ${vid.videoWidth}`;
+    vid.style.width = box.clientHeight + "px"; vid.style.height = box.clientWidth + "px";
+  };
+  vid.addEventListener("loadedmetadata", size);
+  addEventListener("resize", size);
+  box.addEventListener("click", () => (vid.paused ? vid.play() : vid.pause()));
+  vid.addEventListener("play", () => (hint.hidden = true));
+  vid.addEventListener("pause", () => (hint.hidden = false));
+  return box;
+}
+
 async function play(row, via) {
   const body = openSheet();
   const head = el("header");
@@ -693,6 +770,8 @@ async function play(row, via) {
   head.firstChild.append(el("p", { class: "eyebrow" }, via), el("h2", {}, row.place || "Untitled"));
   head.lastChild.addEventListener("click", closeSheet);
   const vid = el("video", { controls: "", playsinline: "", autoplay: "" });
+  const turned = (row.envelope && row.envelope.rotate) || 0;
+  const vidBox = upright(vid, turned);
   const note = el("p", { class: "status", role: "status" }, "Loading the memory…");
   vid.addEventListener("canplay", () => say(note, ""), { once: true });
   vid.addEventListener("error", () => say(note, `This phone could not play the video (error ${vid.error ? vid.error.code : "?"}).`, true));
@@ -701,10 +780,10 @@ async function play(row, via) {
   add("When", prettyId(row.id), "mono"); add("Souvenir", row.souvenir);
   const label = el("img", { class: "labelimg", alt: "This memory's label" });
   const actions = el("div", { class: "actions" });
-  body.append(head, vid, note, dl, label, actions);
+  body.append(head, vidBox, note, dl, label, actions);
   const [v, l, p] = await Promise.all([signed(row.video_path), signed(row.label_path), signed(row.photo_path)]);
   if (v) vid.src = v; else say(note, "This memory has no video.", true);
-  if (p) vid.poster = p;
+  if (p && !turned) vid.poster = p;                                  // the photo is already upright; a turned video is not
   if (l) label.src = l;
   // a fresh label at the current printer settings, for printing again
   try {
@@ -888,7 +967,7 @@ async function show(next) {
   document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-current", t.dataset.view === next ? "page" : "false"));
   if (next !== "auth") try { history.replaceState(null, "", "#" + next); } catch { /* optional */ }
   if (next === "capture") {
-    showPlace();
+    showPlace(); watchTilt(false);
     try { await startCamera($("capVideo"), true); } catch (e) { cameraError(e, capHint); }
   } else if (next === "scan") {
     try {
