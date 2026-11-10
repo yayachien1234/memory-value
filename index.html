@@ -57,6 +57,7 @@ h2 { font-size: 26px; }
 .cam .top { position: absolute; top: 0; left: 0; right: 0; display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;
   padding-top: calc(env(safe-area-inset-top, 0px) + 14px); background: linear-gradient(rgba(13,15,19,.75), transparent); padding-bottom: 30px; }
 .chip { background: rgba(23,26,33,.8); border: 1px solid var(--line); border-radius: 999px; padding: 8px 14px; font-size: 14px; cursor: pointer; }
+.chip[aria-pressed="true"] { background: var(--paper); color: var(--night); border-color: var(--paper); }
 .cam .bottom { position: absolute; left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom, 0px) + 74px); display: grid; justify-items: center; gap: 12px; }
 .shutter { width: 76px; height: 76px; border-radius: 50%; border: 4px solid var(--paper); background: transparent; display: grid; place-items: center; cursor: pointer; padding: 0; }
 .shutter::after { content: ""; width: 58px; height: 58px; border-radius: 50%; background: var(--paper); transition: all .2s; }
@@ -65,6 +66,8 @@ h2 { font-size: 26px; }
 .hint { margin: 0; font-size: 15px; text-shadow: 0 1px 6px rgba(0,0,0,.6); text-align: center; }
 #liveWave { position: absolute; left: 6%; right: 6%; width: 88%; height: 90px; bottom: calc(env(safe-area-inset-bottom, 0px) + 190px); }
 .count { font-family: var(--mono); font-size: 15px; color: var(--rec); }
+.labelFrame { position: absolute; border: 1.5px solid rgba(243,244,246,.9); border-radius: 6px; box-shadow: 0 0 0 100vmax rgba(13,15,19,.55); pointer-events: none; }
+.labelFrame span { position: absolute; left: 0; top: -24px; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
 .frame { position: absolute; left: 5%; right: 5%; top: 32%; height: 30%; border-radius: 14px; outline: 1.5px solid rgba(243,244,246,.85); box-shadow: 0 0 0 100vmax rgba(13,15,19,.45); pointer-events: none; }
 .frame::after { content: ""; position: absolute; left: 6%; right: 6%; top: 50%; height: 1px; background: var(--accent); }
 .frame.found { outline-color: var(--found); }
@@ -122,13 +125,14 @@ details summary { cursor: pointer; font-weight: 500; }
 <!-- capture -->
 <section id="capture" class="cam" hidden>
   <video id="capVideo" playsinline muted autoplay></video>
+  <div class="labelFrame" id="labelFrame"><span>On the label</span></div>
   <div class="top gutter">
     <button class="chip" id="placeChip" type="button" aria-label="Change the place">HONG KONG</button>
     <button class="chip" id="flip" type="button">Flip</button>
   </div>
   <canvas id="liveWave" hidden></canvas>
   <div class="bottom gutter">
-    <p class="hint" id="capHint">Press once: a photo, then 10 seconds of sound and video.</p>
+    <p class="hint" id="capHint">Frame the picture in the box, then press once: a photo, then 10 seconds of sound and video.</p>
     <button class="shutter" id="shutter" type="button" aria-label="Take the photo and start recording"></button>
   </div>
 </section>
@@ -162,6 +166,9 @@ details summary { cursor: pointer; font-weight: 500; }
           <label>Place <input id="addPlace" placeholder="HONG KONG"></label>
           <label>Souvenir <input id="addSouvenir" placeholder="What was bought"></label>
         </div>
+        <label>Part of the photo on the label
+          <select id="addCrop"><option value="0.05">Top</option><option value="0.5" selected>Middle</option><option value="0.95">Bottom</option></select>
+        </label>
         <button class="btn" type="submit" id="addSave">Save memory</button>
         <p class="status" id="addStatus" role="status" aria-live="polite"></p>
       </form>
@@ -175,6 +182,9 @@ details summary { cursor: pointer; font-weight: 500; }
         </label>
         <label>Label size
           <select id="setSize"><option value="compact">72 × 36 mm</option><option value="big">96 × 48 mm</option></select>
+        </label>
+        <label>Photo style
+          <select id="setBg"><option value="local">Detail</option><option value="balanced">Bold</option><option value="dots">Dots</option><option value="solid">Original</option></select>
         </label>
       </div>
       <button class="btn ghost" type="button" id="signOut">Sign out</button>
@@ -276,7 +286,55 @@ const SIZES = {   // millimetres; the photo stops above the band that holds the 
   big:     { W: 96, H: (ppm, head) => head / ppm, HALF: 14, CY: 19, TOP: 39.3, PHOTO: 38.4 },
 };
 
-async function drawLabel({ env, photo, id, place, seconds, dpi = 203, size = "compact" }) {
+// Turning the photo into pure black and white. A thermal head has no grey, so each style is a
+// different answer to "which dots get ink". All of them adapt to the photo's own light.
+function photoInk(grey, W, H, ppm, style) {
+  const out = new Uint8Array(W * H);
+  // a small blur first, so sensor noise does not turn into speckles
+  const sum = new Float64Array((W + 1) * (H + 1));
+  const integral = (src) => {
+    for (let y = 0; y < H; y++) {
+      let row = 0;
+      for (let x = 0; x < W; x++) { row += src[y * W + x]; sum[(y + 1) * (W + 1) + x + 1] = sum[y * (W + 1) + x + 1] + row; }
+    }
+  };
+  const boxMean = (x, y, r) => {
+    const x0 = Math.max(0, x - r), y0 = Math.max(0, y - r), x1 = Math.min(W, x + r + 1), y1 = Math.min(H, y + r + 1);
+    return (sum[y1 * (W + 1) + x1] - sum[y0 * (W + 1) + x1] - sum[y1 * (W + 1) + x0] + sum[y0 * (W + 1) + x0]) / ((x1 - x0) * (y1 - y0));
+  };
+  integral(grey);
+  const soft = new Float32Array(W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) soft[y * W + x] = boxMean(x, y, 1);
+
+  if (style === "solid") {                      // the first version: one fixed cut
+    for (let i = 0; i < W * H; i++) out[i] = soft[i] < 80 ? 1 : 0;
+  } else if (style === "balanced") {            // the cut moves with the light, so about a third of the picture is ink
+    const hist = new Uint32Array(256);
+    for (const v of soft) hist[Math.min(255, v | 0)]++;
+    let cut = 0, acc = 0;
+    while (cut < 255 && (acc += hist[cut]) < W * H * 0.32) cut++;
+    for (let i = 0; i < W * H; i++) out[i] = soft[i] <= cut ? 1 : 0;
+  } else if (style === "local") {               // each dot compared with its neighbourhood: faces survive back light
+    integral(soft);
+    const r = Math.max(4, Math.round(2.5 * ppm));
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const v = soft[y * W + x];
+      out[y * W + x] = v < boxMean(x, y, r) * 0.86 || v < 40 ? 1 : 0;
+    }
+  } else {                                      // "dots": an even dot pattern, the way thermal photo printers do it
+    const bayer = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const light = Math.pow(soft[y * W + x] / 255, 0.75);       // lifted, so the picture stays light behind the code
+      out[y * W + x] = light < (bayer[(y & 3) * 4 + (x & 3)] + 0.5) / 16 ? 1 : 0;
+    }
+  }
+  return out;
+}
+
+// width : height of the picture area on a label, so the viewfinder can show the same frame
+function photoAspect(size) { return SIZES[size].W / SIZES[size].PHOTO; }
+
+async function drawLabel({ env, photo, id, place, seconds, dpi = 203, size = "compact", bgStyle = "local", crop = null, cropY = 0.5 }) {
   const P = PRINTERS[dpi], ppm = dpi / 25.4, G = SIZES[size];
   const W = Math.round(G.W * ppm), H = Math.round(G.H(ppm, P.head) * ppm);
   const code = code39Bars("MV-" + id, P.narrow, P.wide);
@@ -299,15 +357,20 @@ async function drawLabel({ env, photo, id, place, seconds, dpi = 203, size = "co
   let bg = null;
   if (photo) {
     const ph = Math.round(G.PHOTO * ppm);
-    // fill the picture area, keeping the top of the photo (where the faces usually are)
+    // the part of the photo that was inside the frame on the viewfinder; otherwise a band at `cropY`
     const big = document.createElement("canvas");
     big.width = W; big.height = ph;
     const bgx = big.getContext("2d", { willReadFrequently: true });
     const pw = photo.width, phh = photo.height, want = W / ph;
-    let sw = pw, sh = pw / want;
-    if (sh > phh) { sh = phh; sw = phh * want; }
+    let sx, sy, sw, sh;
+    if (crop) { sx = crop.x * pw; sy = crop.y * phh; sw = crop.w * pw; sh = crop.h * phh; }
+    else {
+      sw = pw; sh = pw / want;
+      if (sh > phh) { sh = phh; sw = phh * want; }
+      sx = (pw - sw) / 2; sy = (phh - sh) * cropY;
+    }
     bgx.imageSmoothingQuality = "high";
-    bgx.drawImage(photo, (pw - sw) / 2, Math.min(phh - sh, phh * 0.03), sw, sh, 0, 0, W, ph);
+    bgx.drawImage(photo, sx, sy, sw, sh, 0, 0, W, ph);
     const px = bgx.getImageData(0, 0, W, ph).data;
     const grey = new Uint8Array(W * ph), hist = new Uint32Array(256);
     for (let i = 0; i < W * ph; i++) { const g = (px[i * 4] * 299 + px[i * 4 + 1] * 587 + px[i * 4 + 2] * 114) / 1000 | 0; grey[i] = g; hist[g]++; }
@@ -317,8 +380,9 @@ async function drawLabel({ env, photo, id, place, seconds, dpi = 203, size = "co
     acc = 0;
     for (; hi > 0 && (acc += hist[hi]) < cut; hi--);
     const span = Math.max(1, hi - lo);
+    for (let i = 0; i < W * ph; i++) grey[i] = Math.max(0, Math.min(255, ((grey[i] - lo) * 255) / span));
     bg = new Uint8Array(W * H);
-    for (let i = 0; i < W * ph; i++) bg[i] = ((grey[i] - lo) * 255) / span < 80 ? 1 : 0;
+    bg.set(photoInk(grey, W, ph, ppm, bgStyle));
     // clean reading line through the middle, across the whole label
     const band = Math.max(2, Math.round(0.8 * ppm));
     for (let y = cy - band; y <= cy + band; y++) for (let x = 0; x < W; x++) bg[y * W + x] = 0;
@@ -444,12 +508,30 @@ $("flip").addEventListener("click", async () => {
   try { await startCamera($("capVideo"), true); } catch (e) { cameraError(e, capHint); }
 });
 
+// The box on the viewfinder has the label's own proportions: what is inside it is what the label shows.
+function layoutFrame() {
+  const ar = photoAspect(settings().size), f = $("labelFrame");
+  let w = innerWidth * 0.92, h = w / ar;
+  if (h > innerHeight * 0.5) { h = innerHeight * 0.5; w = h * ar; }
+  Object.assign(f.style, { width: w + "px", height: h + "px", left: (innerWidth - w) / 2 + "px", top: innerHeight * 0.42 - h / 2 + "px" });
+}
+addEventListener("resize", layoutFrame);
+// where that box falls on the camera's own picture (the viewfinder crops the picture to fill the screen)
+function cropFromFrame(video) {
+  const vw = video.videoWidth, vh = video.videoHeight, vr = video.getBoundingClientRect(), r = $("labelFrame").getBoundingClientRect();
+  const s = Math.max(vr.width / vw, vr.height / vh), ox = (vr.width - vw * s) / 2, oy = (vr.height - vh * s) / 2;
+  let x = (r.left - vr.left - ox) / s, y = (r.top - vr.top - oy) / s, w = r.width / s, h = r.height / s;
+  x = Math.max(0, x); y = Math.max(0, y); w = Math.min(vw - x, w); h = Math.min(vh - y, h);
+  return { x: x / vw, y: y / vh, w: w / vw, h: h / vh };
+}
+
 let busy = false;
 shutter.addEventListener("click", async () => {
   if (busy || !stream) return;
   busy = true;
   const moment = new Date(), id = idFromDate(moment);
   const video = $("capVideo");
+  const crop = cropFromFrame(video);
   // the photo: this exact frame
   const shot = document.createElement("canvas");
   shot.width = video.videoWidth; shot.height = video.videoHeight;
@@ -505,8 +587,8 @@ shutter.addEventListener("click", async () => {
   const photo = await createImageBitmap(photoBlob);
   const env = outlineFromPeaks(peaks);
   busy = false;
-  say(capHint, "Press once: a photo, then 10 seconds of sound and video.");
-  review({ id, env, seconds, photo, photoBlob, videoBlob });
+  say(capHint, "Frame the picture in the box, then press once: a photo, then 10 seconds of sound and video.");
+  review({ id, env, seconds, photo, photoBlob, videoBlob, crop });
 });
 
 // ---------------------------------------------------------------- review and save
@@ -520,7 +602,8 @@ function closeSheet() {
   $("sheet").hidden = true;
   $("sheetBody").querySelectorAll("video").forEach((v) => v.pause());
 }
-function settings() { return { dpi: +store.get("dpi", "203"), size: store.get("size", "compact") }; }
+function settings() { return { dpi: +store.get("dpi", "203"), size: store.get("size", "compact"), bgStyle: store.get("bg", "local") }; }
+const BG_STYLES = [["local", "Detail"], ["balanced", "Bold"], ["dots", "Dots"], ["solid", "Original"]];
 
 async function review(m) {
   const body = openSheet();
@@ -538,7 +621,19 @@ async function review(m) {
   const save = el("button", { class: "btn", type: "button" }, "Save memory");
   const status = el("p", { class: "status", role: "status", "aria-live": "polite" });
   const actions = el("div", { class: "actions" }); actions.append(save);
-  body.append(head, img, fields, actions, status, vid);
+  // how the photo turns into black and white, switchable before saving
+  const styles = el("div", { class: "actions", role: "group", "aria-label": "Photo style" });
+  const styleButtons = BG_STYLES.map(([key, name]) => {
+    const b = el("button", { class: "chip", type: "button", "aria-pressed": String(settings().bgStyle === key) }, name);
+    b.addEventListener("click", () => {
+      store.set("bg", key); $("setBg").value = key;
+      styleButtons.forEach((x, i) => x.setAttribute("aria-pressed", String(BG_STYLES[i][0] === key)));
+      render();
+    });
+    return b;
+  });
+  styles.append(...styleButtons);
+  body.append(head, img, styles, fields, actions, status, vid);
 
   let current;
   const render = async () => {
@@ -575,7 +670,8 @@ async function saveMemory(m) {
   const label_path = await up("label.png", m.labelBlob, "image/png");
   const { error } = await sb.from("memories").upsert({
     id: m.id, recorded_at: m.recordedAt.toISOString(), place: m.place, souvenir: m.souvenir || null,
-    envelope: { seconds: Math.round(m.seconds * 10) / 10, points: m.env },   // the outline and how long it lasts
+    // the outline, how long it lasts, and which part of the photo the label uses
+    envelope: { seconds: Math.round(m.seconds * 10) / 10, points: m.env, crop: m.crop || null, cropY: m.cropY ?? 0.5 },
     photo_path, video_path, video_type: m.videoBlob.type, label_path,
   });
   if (error) throw error;
@@ -629,7 +725,7 @@ async function play(row, via) {
   try {
     const photo = p ? await createImageBitmap(await (await fetch(p)).blob()) : null;
     const outline = row.envelope || {};
-    const drawn = await drawLabel({ env: outline.points || [], photo, id: row.id, place: row.place, seconds: outline.seconds || RECORD_SECONDS, ...settings() });
+    const drawn = await drawLabel({ env: outline.points || [], photo, id: row.id, place: row.place, seconds: outline.seconds || RECORD_SECONDS, ...settings(), crop: outline.crop || null, cropY: outline.cropY ?? 0.5 });
     label.src = drawn.label.toDataURL();
     actions.append(...labelButtons(row.id, drawn));
   } catch { /* the stored label still shows */ }
@@ -759,9 +855,10 @@ $("addForm").addEventListener("submit", async (e) => {
     const photo = await createImageBitmap(photoBlob);
     say(st, "Making the label…");
     const place = ($("addPlace").value || placeName()).trim().toUpperCase();
-    const drawn = await drawLabel({ env, photo, id, place, seconds, ...settings() });
+    const cropY = +$("addCrop").value;
+    const drawn = await drawLabel({ env, photo, id, place, seconds, ...settings(), cropY });
     say(st, "Uploading…");
-    await saveMemory({ id, env, seconds, photoBlob, videoBlob: video, labelBlob: await toBlob(drawn.label), place, souvenir: $("addSouvenir").value.trim(), recordedAt: dateFromId(id) });
+    await saveMemory({ id, env, seconds, cropY, photoBlob, videoBlob: video, labelBlob: await toBlob(drawn.label), place, souvenir: $("addSouvenir").value.trim(), recordedAt: dateFromId(id) });
     say(st, `Saved as ${prettyId(id)}.`);
     e.target.reset(); $("addPlace").value = placeName(); $("addId").textContent = "";
     loadLibrary();
@@ -772,7 +869,9 @@ $("addForm").addEventListener("submit", async (e) => {
 $("setDpi").value = store.get("dpi", "203");
 $("setSize").value = store.get("size", "compact");
 $("setDpi").addEventListener("change", (e) => store.set("dpi", e.target.value));
-$("setSize").addEventListener("change", (e) => store.set("size", e.target.value));
+$("setSize").addEventListener("change", (e) => { store.set("size", e.target.value); layoutFrame(); });
+$("setBg").value = store.get("bg", "local");
+$("setBg").addEventListener("change", (e) => store.set("bg", e.target.value));
 $("signOut").addEventListener("click", () => sb.auth.signOut());
 
 // ---------------------------------------------------------------- sign in
@@ -800,7 +899,7 @@ async function show(next) {
   document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-current", t.dataset.view === next ? "page" : "false"));
   if (next !== "auth") try { history.replaceState(null, "", "#" + next); } catch { /* optional */ }
   if (next === "capture") {
-    showPlace();
+    showPlace(); layoutFrame();
     try { await startCamera($("capVideo"), true); } catch (e) { cameraError(e, capHint); }
   } else if (next === "scan") {
     try {
