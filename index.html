@@ -54,6 +54,7 @@ h2 { font-size: 26px; }
 /* camera views */
 .cam { position: fixed; inset: 0; }
 .cam video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #000; }
+.cam video.mirror { transform: scaleX(-1); }   /* the front camera shown like a mirror, as phone cameras do */
 .cam .top { position: absolute; top: 0; left: 0; right: 0; display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;
   padding-top: calc(env(safe-area-inset-top, 0px) + 14px); background: linear-gradient(rgba(13,15,19,.75), transparent); padding-bottom: 30px; }
 .chip { background: rgba(23,26,33,.8); border: 1px solid var(--line); border-radius: 999px; padding: 8px 14px; font-size: 14px; cursor: pointer; }
@@ -472,6 +473,8 @@ async function startCamera(videoEl, withAudio) {
     video: { facingMode: { ideal: withAudio ? facing : "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } },
   });
   videoEl.srcObject = stream;
+  const settingsNow = stream.getVideoTracks()[0].getSettings();
+  videoEl.classList.toggle("mirror", withAudio && (settingsNow.facingMode || facing) === "user");
   await videoEl.play().catch(() => {});
 }
 function stopCamera() {
@@ -515,7 +518,9 @@ shutter.addEventListener("click", async () => {
   // the photo: this exact frame
   const shot = document.createElement("canvas");
   shot.width = video.videoWidth; shot.height = video.videoHeight;
-  shot.getContext("2d").drawImage(video, 0, 0);
+  const sg = shot.getContext("2d");
+  if (video.classList.contains("mirror")) { sg.translate(shot.width, 0); sg.scale(-1, 1); }   // keep the photo as it looked
+  sg.drawImage(video, 0, 0);
   const photoBlob = await toBlob(shot, "image/jpeg", 0.9);
 
   // then the sound and video
