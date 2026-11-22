@@ -899,9 +899,10 @@ async function t02Connect(onState) {
   const server = await step("connecting", () => device.gatt.connect());
   const service = await step("finding service ff00", () => server.getPrimaryService(T02.service));
   const ch = await step("finding characteristic ff02", () => service.getCharacteristic(T02.write));
-  try { const n = await service.getCharacteristic(T02.notify); await n.startNotifications(); } catch { /* status only */ }
-  await new Promise((r) => setTimeout(r, 300));                       // let the link settle before the first write
-  t02 = { device, ch, mode: 0 };
+  // No status notifications: printing does not need them, and on Windows subscribing makes the
+  // system try to pair the printer, which drops the link.
+  await new Promise((r) => setTimeout(r, 500));                       // let the link settle before the first write
+  t02 = { device, ch, mode: t02 ? t02.mode : 0 };
   return t02;
 }
 
@@ -914,18 +915,27 @@ const T02_MODES = [
 
 async function t02Print(canvas, onState) {
   if (canvas.width !== T02.head) throw new Error("The T02 prints 384 dots across: set Resolution to 203 dpi in Settings.");
-  const p = await t02Connect(onState);
+  let p = await t02Connect(onState);
   const { bytes, rows } = t02Payload(canvas);
   const props = p.ch.properties;
   const usable = T02_MODES.filter((m) => (m.reply ? props.write : props.writeWithoutResponse));
-  let k = Math.min(p.mode, usable.length - 1);
+  let k = Math.min(p.mode, usable.length - 1), reconnects = 0;
   for (let i = 0; i < bytes.length;) {
     const m = usable[k], pkt = bytes.subarray(i, i + m.size);
     try {
       if (m.reply) await p.ch.writeValueWithResponse(pkt); else await p.ch.writeValueWithoutResponse(pkt);
     } catch (e) {
+      const where = `at byte ${i} of ${bytes.length}, ${m.size}-byte packets, ${m.reply ? "with" : "without"} reply`;
+      if (!p.device.gatt.connected && reconnects < 2) {               // the link dropped: connect again and start the label over
+        reconnects++;
+        onState(`The printer disconnected (${where}). Connecting again…`);
+        await new Promise((r) => setTimeout(r, 800));
+        p = await t02Connect(onState);
+        i = 0;
+        continue;
+      }
       if (k < usable.length - 1 && p.device.gatt.connected) { k++; await new Promise((r) => setTimeout(r, 300)); continue; }
-      throw new Error(`${e.message || e} (at byte ${i} of ${bytes.length}, ${m.size}-byte packets, ${m.reply ? "with" : "without"} reply; write ${props.write}, no-reply ${props.writeWithoutResponse})`);
+      throw new Error(`${e.message || e} (${where}; reconnected ${reconnects}×)`);
     }
     p.mode = k;                                                       // remember what worked for the next label
     i += pkt.length;
