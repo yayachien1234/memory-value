@@ -894,33 +894,43 @@ async function t02Connect(onState) {
       optionalServices: [T02.service],
     });
   }
+  const step = async (name, fn) => { try { return await fn(); } catch (e) { throw new Error(`${e.message || e} (while ${name})`); } };
   onState("Connecting to the printer…");
-  const server = await device.gatt.connect();
-  const service = await server.getPrimaryService(T02.service);
-  const ch = await service.getCharacteristic(T02.write);
+  const server = await step("connecting", () => device.gatt.connect());
+  const service = await step("finding service ff00", () => server.getPrimaryService(T02.service));
+  const ch = await step("finding characteristic ff02", () => service.getCharacteristic(T02.write));
   try { const n = await service.getCharacteristic(T02.notify); await n.startNotifications(); } catch { /* status only */ }
-  device.addEventListener("gattserverdisconnected", () => { if (t02) t02.ch = null; });
-  t02 = { device, ch };
+  await new Promise((r) => setTimeout(r, 300));                       // let the link settle before the first write
+  t02 = { device, ch, mode: 0 };
   return t02;
 }
 
+// Ways to send, tried in order until one works: big packets first, then smaller ones (Windows and
+// some phones only take small packets), then writes that wait for the printer's answer.
+const T02_MODES = [
+  { size: 128, reply: false, gap: 20 }, { size: 60, reply: false, gap: 15 },
+  { size: 20, reply: false, gap: 8 }, { size: 20, reply: true, gap: 0 },
+];
+
 async function t02Print(canvas, onState) {
   if (canvas.width !== T02.head) throw new Error("The T02 prints 384 dots across: set Resolution to 203 dpi in Settings.");
-  const { ch } = await t02Connect(onState);
+  const p = await t02Connect(onState);
   const { bytes, rows } = t02Payload(canvas);
-  const quick = ch.properties.writeWithoutResponse;
-  let size = 128;
+  const props = p.ch.properties;
+  const usable = T02_MODES.filter((m) => (m.reply ? props.write : props.writeWithoutResponse));
+  let k = Math.min(p.mode, usable.length - 1);
   for (let i = 0; i < bytes.length;) {
-    const pkt = bytes.subarray(i, i + size);
+    const m = usable[k], pkt = bytes.subarray(i, i + m.size);
     try {
-      if (quick) await ch.writeValueWithoutResponse(pkt); else await ch.writeValueWithResponse(pkt);
+      if (m.reply) await p.ch.writeValueWithResponse(pkt); else await p.ch.writeValueWithoutResponse(pkt);
     } catch (e) {
-      if (size > 20) { size = 20; continue; }                         // a small Bluetooth packet size: send smaller pieces
-      throw e;
+      if (k < usable.length - 1 && p.device.gatt.connected) { k++; await new Promise((r) => setTimeout(r, 300)); continue; }
+      throw new Error(`${e.message || e} (at byte ${i} of ${bytes.length}, ${m.size}-byte packets, ${m.reply ? "with" : "without"} reply; write ${props.write}, no-reply ${props.writeWithoutResponse})`);
     }
+    p.mode = k;                                                       // remember what worked for the next label
     i += pkt.length;
     onState(`Printing… ${Math.round((i / bytes.length) * 100)} %`);
-    await new Promise((r) => setTimeout(r, size > 20 ? 20 : 8));
+    if (m.gap) await new Promise((r) => setTimeout(r, m.gap));
   }
   await new Promise((r) => setTimeout(r, 1500 + (rows / 80) * 1000));   // the printer is still pulling paper
 }
