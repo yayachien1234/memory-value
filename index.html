@@ -446,7 +446,7 @@ async function drawLabel(opts) {
 // then the words. The code never touches the photo.
 async function drawSeparate({ env, photo, id, place, seconds, dpi = 203, bgStyle = "dots", code = "c128-thick" }) {
   const P = PRINTERS[dpi], ppm = dpi / 25.4, W = P.head;
-  const M = Math.round(2 * ppm);
+  const M = 0;                                                        // edge to edge: the printer leaves its own white
   const portrait = !!photo && photo.height > photo.width;
   const pw = W - 2 * M, ph = photo ? Math.round(pw * (portrait ? 4 / 3 : 3 / 4)) : 0;
   const bars = codeAcross(id, W, code);
@@ -864,7 +864,9 @@ let t02 = null;                                                       // { devic
 
 function t02Payload(canvas) {
   const W = canvas.width, H = canvas.height, row = W / 8;
-  const tail = Math.round(10 * 8);                                    // 10 mm of blank paper, so the label clears the tear bar
+  // 10 mm of blank paper after the label. The tear bar is about 5 mm past the print head, so this
+  // leaves about 5 mm under the label and the next one starts with about 5 mm above it.
+  const tail = Math.round(10 * 8);
   const px = canvas.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, W, H).data;
   const bits = new Uint8Array(row * (H + tail));
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
@@ -877,7 +879,6 @@ function t02Payload(canvas) {
     parts.push([0x1d, 0x76, 0x30, 0x00, row & 0xff, row >> 8, n & 0xff, n >> 8]);
     parts.push(bits.subarray(start * row, (start + n) * row));
   }
-  parts.push([0x1b, 0x64, 0x02], [0x1b, 0x64, 0x02]);
   const size = parts.reduce((s, p) => s + p.length, 0), out = new Uint8Array(size);
   let at = 0;
   for (const p of parts) { out.set(p, at); at += p.length; }
@@ -1075,7 +1076,8 @@ async function scanLoop() {
     let text = null;
     if (video.readyState >= 2) {
       if (native) {
-        try { const hits = await native.detect(video); if (hits.length) text = hits[0].rawValue; } catch { /* next frame */ }
+        // the dotted photo can look like a stray barcode too, so look through every hit for the 12 digits
+        try { const hits = await native.detect(video); if (hits.length) text = hits.map((h) => h.rawValue).join(" "); } catch { /* next frame */ }
       } else if (zx) {
         try {
           const Z = window.ZXing;
