@@ -441,20 +441,21 @@ async function drawLabel(opts) {
   return (opts.code || "c128-thick") === "overlay" ? drawOverlay(opts) : drawSeparate(opts);
 }
 
-// The label read sideways: the whole photo, then the waveform code standing up beside it, then
-// the words. The code runs across the paper, so it never touches the photo.
+// The label read the way it leaves the printer: the photo upright at the top, in its own shape
+// (held sideways it is short, held upright it is tall), the waveform code across the paper below it,
+// then the words. The code never touches the photo.
 async function drawSeparate({ env, photo, id, place, seconds, dpi = 203, bgStyle = "dots", code = "c128-thick" }) {
-  const P = PRINTERS[dpi], ppm = dpi / 25.4, H = P.head;
+  const P = PRINTERS[dpi], ppm = dpi / 25.4, W = P.head;
   const M = Math.round(2 * ppm);
   const portrait = !!photo && photo.height > photo.width;
-  const ph = H - 2 * M, pw = photo ? Math.round(ph * (portrait ? 3 / 4 : 4 / 3)) : 0;   // an upright photo stays upright
-  const bars = codeAcross(id, H, code);
-  const L = bars.length, y0 = Math.floor((H - L) / 2);
+  const pw = W - 2 * M, ph = photo ? Math.round(pw * (portrait ? 4 / 3 : 3 / 4)) : 0;
+  const bars = codeAcross(id, W, code);
+  const L = bars.length, x0 = Math.floor((W - L) / 2);
   const half = Math.round(8.5 * ppm), floor = Math.round(0.8 * ppm);
-  const xCode = photo ? M + pw + Math.round(3 * ppm) : M;
-  const xWords = xCode + 2 * half + 1 + Math.round(2 * ppm);
-  const thick = Math.round(10 * ppm);
-  const W = xWords + thick + M;
+  const yCode = photo ? M + ph + Math.round(3 * ppm) : M;
+  const yWords = yCode + 2 * half + 1 + Math.round(2.5 * ppm);
+  const thick = Math.round(8 * ppm);
+  const H = yWords + thick + M;
 
   const label = document.createElement("canvas");
   label.width = W; label.height = H;
@@ -468,21 +469,21 @@ async function drawSeparate({ env, photo, id, place, seconds, dpi = 203, bgStyle
     const ink = photoToInk(photo, pw, ph, ppm, bgStyle);
     for (let y = 0; y < ph; y++) for (let x = 0; x < pw; x++) if (ink[y * pw + x]) dot(M + x, M + y);
   }
-  // 2. the waveform standing up, the code's spaces cut through it; the recording starts at the top
+  // 2. the waveform across the paper, the code's spaces cut through it; the recording starts on the left
   const outline = smoothOutline(env);
-  const cx = xCode + half;
+  const cy = yCode + half;
   for (const [a, b] of bars.bars) for (let c = a; c < b; c++) {
     const h = Math.max(Math.round(outline[Math.min(1999, Math.floor((c / L) * 1999))] * half), floor);
-    for (let x = cx - h; x <= cx + h; x++) dot(x, y0 + c);
+    for (let y = cy - h; y <= cy + h; y++) dot(x0 + c, y);
   }
   g.putImageData(img, 0, 0);
 
-  // 3. the words, reading upwards along the end
-  const words = await wordsCanvas({ id, place, seconds, ppm, length: H - 2 * M, thick, m: 0, y1: 0.6 * ppm, y2: 4.8 * ppm });
-  g.drawImage(turn(words, false), xWords, M);
+  // 3. the words underneath
+  const words = await wordsCanvas({ id, place, seconds, ppm, length: W - 2 * M, thick, m: 0, y1: 0, y2: 4.2 * ppm });
+  g.drawImage(words, M, yWords);
   toInk(label);
-  // on the roll the image must be exactly as wide as the print head
-  return { label, roll: turn(label, true), portrait };
+  // already as wide as the print head, so the label is also the roll
+  return { label, roll: label, portrait };
 }
 
 // The first design: the waveform code laid over the photo. Held upright, the photo stands and the
