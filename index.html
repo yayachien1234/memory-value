@@ -185,6 +185,9 @@ details summary { cursor: pointer; font-weight: 500; }
         <label>Photo style
           <select id="setBg"><option value="dots">Dots</option><option value="local">Detail</option><option value="balanced">Bold</option><option value="solid">Original</option></select>
         </label>
+        <label>Code
+          <select id="setCode"><option value="c128-thick">Code 128, thick</option><option value="c128-fine">Code 128, fine</option><option value="c39">Code 39, thin</option><option value="overlay">On the photo (first design)</option></select>
+        </label>
       </div>
       <button class="btn ghost" type="button" id="signOut">Sign out</button>
     </div>
@@ -253,6 +256,35 @@ function code39Bars(data, narrow, wide) {
     pos += w; i = j;
   }
   return { bars, length: pos };
+}
+
+// Code 128 patterns (values 0-106; 105 = start C), 11 modules each. Set C packs two digits per symbol,
+// so 12 digits need only 101 modules: short enough to run across the paper.
+const C128 = ["11011001100","11001101100","11001100110","10010011000","10010001100","10001001100","10011001000","10011000100","10001100100","11001001000","11001000100","11000100100","10110011100","10011011100","10011001110","10111001100","10011101100","10011100110","11001110010","11001011100","11001001110","11011100100","11001110100","11101101110","11101001100","11100101100","11100100110","11101100100","11100110100","11100110010","11011011000","11011000110","11000110110","10100011000","10001011000","10001000110","10110001000","10001101000","10001100010","11010001000","11000101000","11000100010","10110111000","10110001110","10001101110","10111011000","10111000110","10001110110","11101110110","11010001110","11000101110","11011101000","11011100010","11011101110","11101011000","11101000110","11100010110","11101101000","11101100010","11100011010","11101111010","11001000010","11110001010","10100110000","10100001100","10010110000","10010000110","10000101100","10000100110","10110010000","10110000100","10011010000","10011000010","10000110100","10000110010","11000010010","11001010000","11110111010","11000010100","10001111010","10100111100","10010111100","10010011110","10111100100","10011110100","10011110010","11110100100","11110010100","11110010010","11011011110","11011110110","11110110110","10101111000","10100011110","10001011110","10111101000","10111100010","11110101000","11110100010","10111011110","10111101110","11101011110","11110101110","11010000100","11010010000","11010011100"];
+function code128Bars(data, module) {
+  const vals = [];
+  for (let i = 0; i < data.length; i += 2) vals.push(+data.slice(i, i + 2));
+  const seq = [105, ...vals];
+  const check = (seq[0] + vals.reduce((s, v, k) => s + v * (k + 1), 0)) % 103;
+  const mods = [...seq, check].map((v) => C128[v]).join("") + "1100011101011";   // stop, ending in its last bar
+  const bars = [];
+  let pos = 0;
+  for (const b of mods) {
+    if (b === "1") { const last = bars[bars.length - 1]; if (last && last[1] === pos) last[1] += module; else bars.push([pos, pos + module]); }
+    pos += module;
+  }
+  return { bars, length: pos };
+}
+
+// The code that runs across the paper: the widest bars that still leave a quiet zone of
+// ten modules at each edge. "fine" is one dot thinner; Code 39 needs much thinner bars to fit.
+function codeAcross(id, head, kind) {
+  if (kind === "c39") {
+    for (const [n, w] of [[3, 7], [2, 5], [1, 3]]) { const c = code39Bars(id, n, w); if (c.length + 20 * n <= head) return c; }
+    return code39Bars(id, 1, 3);
+  }
+  const thick = Math.max(1, Math.floor(head / 121));
+  return code128Bars(id, kind === "c128-fine" ? Math.max(1, thick - 1) : thick);
 }
 
 // The stored outline (a few hundred points) drawn as a clean silhouette: keep every peak, drop the hiss.
@@ -337,10 +369,125 @@ function turn(src, clockwise) {
   return c;
 }
 
-// The label follows the photo: held upright, the photo stands and the waveform runs down it;
-// held sideways, the photo lies and the waveform runs across. Either way the whole photo is used
-// and the sticker is the same size on the roll: the paper's width by about 77 mm.
-async function drawLabel({ env, photo, id, place, seconds, dpi = 203, bgStyle = "dots" }) {
+// A photo, cropped from its centre to W x H and turned into printer dots.
+function photoToInk(src, W, H, ppm, bgStyle) {
+  const work = document.createElement("canvas");
+  work.width = W; work.height = H;
+  const wg = work.getContext("2d", { willReadFrequently: true });
+  const pw = src.width, ph = src.height, want = W / H;
+  let sw = pw, sh = pw / want;                                        // a photo of the same shape fits exactly; others lose only their edges
+  if (sh > ph) { sh = ph; sw = ph * want; }
+  wg.imageSmoothingQuality = "high";
+  wg.drawImage(src, (pw - sw) / 2, (ph - sh) / 2, sw, sh, 0, 0, W, H);
+  const px = wg.getImageData(0, 0, W, H).data;
+  const grey = new Uint8Array(W * H), hist = new Uint32Array(256);
+  for (let i = 0; i < W * H; i++) { const v = (px[i * 4] * 299 + px[i * 4 + 1] * 587 + px[i * 4 + 2] * 114) / 1000 | 0; grey[i] = v; hist[v]++; }
+  let lo = 0, hi = 255, acc = 0;                                     // stretch the tones, ignoring the 2 % at each end
+  const cut = W * H * 0.02;
+  for (; lo < 255 && (acc += hist[lo]) < cut; lo++);
+  acc = 0;
+  for (; hi > 0 && (acc += hist[hi]) < cut; hi--);
+  const span = Math.max(1, hi - lo);
+  for (let i = 0; i < W * H; i++) grey[i] = Math.max(0, Math.min(255, ((grey[i] - lo) * 255) / span));
+  return photoInk(grey, W, H, ppm, bgStyle);
+}
+
+// Place on the first line (shrunk to fit), times and date on the second, drawn on a white canvas.
+async function wordsCanvas({ id, place, seconds, ppm, length, thick, m, y1, y2 }) {
+  const words = document.createElement("canvas");
+  words.width = length; words.height = thick;
+  const t = words.getContext("2d");
+  t.fillStyle = "#fff"; t.fillRect(0, 0, words.width, words.height);
+  await Promise.all([document.fonts.load(`500 ${Math.round(2 * ppm)}px "IBM Plex Mono"`), document.fonts.load(`500 ${Math.round(2.4 * ppm)}px Jost`)]).catch(() => {});
+  t.fillStyle = "#000"; t.textBaseline = "top";
+  const spaced = (text, x, y, font, track, right = false) => {
+    t.font = font;
+    const width = [...text].reduce((w, ch) => w + t.measureText(ch).width + track, -track);
+    let cx = right ? x - width : x;
+    for (const ch of text) { t.fillText(ch, cx, y); cx += t.measureText(ch).width + track; }
+  };
+  const start = dateFromId(id), end = new Date(start.getTime() + Math.round(seconds) * 1000);
+  const hms = (d) => `${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`;
+  const mono = `500 ${Math.round(2 * ppm)}px "IBM Plex Mono", monospace`;
+  const room = length - 2 * m;
+  const widthOf = (text, size, track) => {
+    t.font = `500 ${Math.round(size * ppm)}px Jost, sans-serif`;
+    return [...text].reduce((w, ch) => w + t.measureText(ch).width + track * ppm, -track * ppm);
+  };
+  const fit = (text) => {
+    for (let size = 2.4; size >= 1.6; size -= 0.2) for (const track of [0.6, 0.4, 0.25, 0.1]) if (widthOf(text, size, track) <= room) return { text, size, track };
+    return null;
+  };
+  let name = (place || "").toUpperCase().trim(), fitted = fit(name);
+  while (!fitted && name.length > 1) { name = name.slice(0, -1).trimEnd(); fitted = fit(name + "…"); }
+  if (fitted) spaced(fitted.text, m, y1, `500 ${Math.round(fitted.size * ppm)}px Jost, sans-serif`, fitted.track * ppm);
+  spaced(`${hms(start)} – ${hms(end)}`, m, y2, mono, 0.1 * ppm);
+  spaced(`${id.slice(0, 2)}.${id.slice(2, 4)}.${id.slice(4, 6)}`, length - m, y2, mono, 0.15 * ppm, true);
+  return words;
+}
+
+// Every label is printed in pure black and white (the text is the only grey before this).
+function toInk(canvas) {
+  const g = canvas.getContext("2d", { willReadFrequently: true });
+  const done = g.getImageData(0, 0, canvas.width, canvas.height);
+  for (let i = 0; i < done.data.length; i += 4) {
+    const v = done.data[i] + done.data[i + 1] + done.data[i + 2] < 384 ? 0 : 255;
+    done.data[i] = done.data[i + 1] = done.data[i + 2] = v;
+  }
+  g.putImageData(done, 0, 0);
+}
+
+async function drawLabel(opts) {
+  return (opts.code || "c128-thick") === "overlay" ? drawOverlay(opts) : drawSeparate(opts);
+}
+
+// The label read sideways: the whole photo, then the waveform code standing up beside it, then
+// the words. The code runs across the paper, so it never touches the photo.
+async function drawSeparate({ env, photo, id, place, seconds, dpi = 203, bgStyle = "dots", code = "c128-thick" }) {
+  const P = PRINTERS[dpi], ppm = dpi / 25.4, H = P.head;
+  const M = Math.round(2 * ppm);
+  const portrait = !!photo && photo.height > photo.width;
+  const ph = H - 2 * M, pw = photo ? Math.round(ph * (portrait ? 3 / 4 : 4 / 3)) : 0;   // an upright photo stays upright
+  const bars = codeAcross(id, H, code);
+  const L = bars.length, y0 = Math.floor((H - L) / 2);
+  const half = Math.round(8.5 * ppm), floor = Math.round(0.8 * ppm);
+  const xCode = photo ? M + pw + Math.round(3 * ppm) : M;
+  const xWords = xCode + 2 * half + 1 + Math.round(2 * ppm);
+  const thick = Math.round(10 * ppm);
+  const W = xWords + thick + M;
+
+  const label = document.createElement("canvas");
+  label.width = W; label.height = H;
+  const g = label.getContext("2d", { willReadFrequently: true });
+  g.fillStyle = "#fff"; g.fillRect(0, 0, W, H);
+  const img = g.getImageData(0, 0, W, H);
+  const dot = (x, y) => { const i = (y * W + x) * 4; img.data[i] = img.data[i + 1] = img.data[i + 2] = 0; };
+
+  // 1. the photo, in pure black and white
+  if (photo) {
+    const ink = photoToInk(photo, pw, ph, ppm, bgStyle);
+    for (let y = 0; y < ph; y++) for (let x = 0; x < pw; x++) if (ink[y * pw + x]) dot(M + x, M + y);
+  }
+  // 2. the waveform standing up, the code's spaces cut through it; the recording starts at the top
+  const outline = smoothOutline(env);
+  const cx = xCode + half;
+  for (const [a, b] of bars.bars) for (let c = a; c < b; c++) {
+    const h = Math.max(Math.round(outline[Math.min(1999, Math.floor((c / L) * 1999))] * half), floor);
+    for (let x = cx - h; x <= cx + h; x++) dot(x, y0 + c);
+  }
+  g.putImageData(img, 0, 0);
+
+  // 3. the words, reading upwards along the end
+  const words = await wordsCanvas({ id, place, seconds, ppm, length: H - 2 * M, thick, m: 0, y1: 0.6 * ppm, y2: 4.8 * ppm });
+  g.drawImage(turn(words, false), xWords, M);
+  toInk(label);
+  // on the roll the image must be exactly as wide as the print head
+  return { label, roll: turn(label, true), portrait };
+}
+
+// The first design: the waveform code laid over the photo. Held upright, the photo stands and the
+// waveform runs down it; held sideways, the photo lies and the waveform runs across.
+async function drawOverlay({ env, photo, id, place, seconds, dpi = 203, bgStyle = "dots" }) {
   const P = PRINTERS[dpi], ppm = dpi / 25.4;
   const portrait = !photo || photo.height > photo.width;
   // everything is drawn lying down (code left to right), then stood up for an upright photo
@@ -371,25 +518,7 @@ async function drawLabel({ env, photo, id, place, seconds, dpi = 203, bgStyle = 
       c.getContext("2d").drawImage(photo, 0, 0);
       src = turn(c, false);
     }
-    const work = document.createElement("canvas");
-    work.width = WW; work.height = HH;
-    const wg = work.getContext("2d", { willReadFrequently: true });
-    const pw = src.width, ph = src.height, want = WW / HH;
-    let sw = pw, sh = pw / want;                                      // a 4:3 photo fits exactly; others lose only their edges
-    if (sh > ph) { sh = ph; sw = ph * want; }
-    wg.imageSmoothingQuality = "high";
-    wg.drawImage(src, (pw - sw) / 2, (ph - sh) / 2, sw, sh, 0, 0, WW, HH);
-    const px = wg.getImageData(0, 0, WW, HH).data;
-    const grey = new Uint8Array(WW * HH), hist = new Uint32Array(256);
-    for (let i = 0; i < WW * HH; i++) { const v = (px[i * 4] * 299 + px[i * 4 + 1] * 587 + px[i * 4 + 2] * 114) / 1000 | 0; grey[i] = v; hist[v]++; }
-    let lo = 0, hi = 255, acc = 0;                                   // stretch the tones, ignoring the 2 % at each end
-    const cut = WW * HH * 0.02;
-    for (; lo < 255 && (acc += hist[lo]) < cut; lo++);
-    acc = 0;
-    for (; hi > 0 && (acc += hist[hi]) < cut; hi--);
-    const span = Math.max(1, hi - lo);
-    for (let i = 0; i < WW * HH; i++) grey[i] = Math.max(0, Math.min(255, ((grey[i] - lo) * 255) / span));
-    bg = photoInk(grey, WW, HH, ppm, bgStyle);
+    bg = photoToInk(src, WW, HH, ppm, bgStyle);
     const band = Math.max(2, Math.round(0.8 * ppm));                 // a clean reading line along the code
     for (let y = cy - band; y <= cy + band; y++) for (let x = 0; x < WW; x++) bg[y * WW + x] = 0;
     for (const [s0, s1] of gaps) {                                    // each slit cleared as tall as the taller bar beside it
@@ -634,8 +763,9 @@ function closeSheet() {
   $("sheet").hidden = true;
   $("sheetBody").querySelectorAll("video").forEach((v) => v.pause());
 }
-function settings() { return { dpi: +store.get("dpi", "203"), bgStyle: store.get("bg", "dots") }; }
+function settings() { return { dpi: +store.get("dpi", "203"), bgStyle: store.get("bg", "dots"), code: store.get("code", "c128-thick") }; }
 const BG_STYLES = [["dots", "Dots"], ["local", "Detail"], ["balanced", "Bold"], ["solid", "Original"]];
+const CODE_STYLES = [["c128-thick", "128 thick"], ["c128-fine", "128 fine"], ["c39", "39 thin"], ["overlay", "On photo"]];
 
 async function review(m) {
   const body = openSheet();
@@ -666,7 +796,19 @@ async function review(m) {
     return b;
   });
   styles.append(...styleButtons);
-  body.append(head, img, styles, fields, actions, status, vidBox);
+  // which code, switchable too, so each can be printed and scanned
+  const codes = el("div", { class: "actions", role: "group", "aria-label": "Code" });
+  const codeButtons = CODE_STYLES.map(([key, name]) => {
+    const b = el("button", { class: "chip", type: "button", "aria-pressed": String(settings().code === key) }, name);
+    b.addEventListener("click", () => {
+      store.set("code", key); $("setCode").value = key;
+      codeButtons.forEach((x, i) => x.setAttribute("aria-pressed", String(CODE_STYLES[i][0] === key)));
+      render();
+    });
+    return b;
+  });
+  codes.append(...codeButtons);
+  body.append(head, img, styles, codes, fields, actions, status, vidBox);
 
   let current;
   const render = async () => {
@@ -934,6 +1076,8 @@ $("setDpi").value = store.get("dpi", "203");
 $("setDpi").addEventListener("change", (e) => store.set("dpi", e.target.value));
 $("setBg").value = store.get("bg", "dots");
 $("setBg").addEventListener("change", (e) => store.set("bg", e.target.value));
+$("setCode").value = store.get("code", "c128-thick");
+$("setCode").addEventListener("change", (e) => store.set("code", e.target.value));
 $("signOut").addEventListener("click", () => sb.auth.signOut());
 
 // ---------------------------------------------------------------- sign in
