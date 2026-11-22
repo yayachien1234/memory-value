@@ -188,7 +188,12 @@ details summary { cursor: pointer; font-weight: 500; }
         <label>Code
           <select id="setCode"><option value="c128-thick">Code 128, thick</option><option value="c128-fine">Code 128, fine</option><option value="c39">Code 39, thin</option><option value="overlay">On the photo (first design)</option></select>
         </label>
+        <label>Right margin
+          <select id="setRight"><option value="0">0 mm (edge to edge)</option><option value="1">1 mm</option><option value="1.5">1.5 mm</option><option value="2">2 mm</option><option value="2.5">2.5 mm</option><option value="3">3 mm</option></select>
+        </label>
       </div>
+      <button class="btn ghost" type="button" id="alignTest">Print alignment ruler (T02)</button>
+      <p class="status" id="alignStatus" role="status" aria-live="polite"></p>
       <button class="btn ghost" type="button" id="signOut">Sign out</button>
     </div>
   </div>
@@ -444,13 +449,16 @@ async function drawLabel(opts) {
 // The label read the way it leaves the printer: the photo upright at the top, in its own shape
 // (held sideways it is short, held upright it is tall), the waveform code across the paper below it,
 // then the words. The code never touches the photo.
-async function drawSeparate({ env, photo, id, place, seconds, dpi = 203, bgStyle = "dots", code = "c128-thick" }) {
+async function drawSeparate({ env, photo, id, place, seconds, dpi = 203, bgStyle = "dots", code = "c128-thick", rightMm = 0 }) {
   const P = PRINTERS[dpi], ppm = dpi / 25.4, W = P.head;
   const M = 0;                                                        // edge to edge: the printer leaves its own white
+  // The roll is wider than the print head and can sit a little to one side: a blank strip on the
+  // right keeps the words from running off the paper (the head cannot reach further left).
+  const CW = W - Math.round(rightMm * ppm);
   const portrait = !!photo && photo.height > photo.width;
-  const pw = W - 2 * M, ph = photo ? Math.round(pw * (portrait ? 4 / 3 : 3 / 4)) : 0;
+  const pw = CW - 2 * M, ph = photo ? Math.round(pw * (portrait ? 4 / 3 : 3 / 4)) : 0;
   const bars = codeAcross(id, W, code);
-  const L = bars.length, x0 = Math.floor((W - L) / 2);
+  const L = bars.length, x0 = Math.max(0, Math.floor((CW - L) / 2));
   const half = Math.round(8.5 * ppm), floor = Math.round(0.8 * ppm);
   const yCode = photo ? M + ph + Math.round(3 * ppm) : M;
   const yWords = yCode + 2 * half + 1 + Math.round(2.5 * ppm);
@@ -479,7 +487,7 @@ async function drawSeparate({ env, photo, id, place, seconds, dpi = 203, bgStyle
   g.putImageData(img, 0, 0);
 
   // 3. the words underneath
-  const words = await wordsCanvas({ id, place, seconds, ppm, length: W - 2 * M, thick, m: 0, y1: 0, y2: 4.2 * ppm });
+  const words = await wordsCanvas({ id, place, seconds, ppm, length: CW - 2 * M, thick, m: 0, y1: 0, y2: 4.2 * ppm });
   g.drawImage(words, M, yWords);
   toInk(label);
   // already as wide as the print head, so the label is also the roll
@@ -764,7 +772,7 @@ function closeSheet() {
   $("sheet").hidden = true;
   $("sheetBody").querySelectorAll("video").forEach((v) => v.pause());
 }
-function settings() { return { dpi: +store.get("dpi", "203"), bgStyle: store.get("bg", "dots"), code: store.get("code", "c128-thick") }; }
+function settings() { return { dpi: +store.get("dpi", "203"), bgStyle: store.get("bg", "dots"), code: store.get("code", "c128-thick"), rightMm: +store.get("right", "0") }; }
 const BG_STYLES = [["dots", "Dots"], ["local", "Detail"], ["balanced", "Bold"], ["solid", "Original"]];
 const CODE_STYLES = [["c128-thick", "128 thick"], ["c128-fine", "128 fine"], ["c39", "39 thin"], ["overlay", "On photo"]];
 
@@ -944,6 +952,25 @@ async function t02Print(canvas, onState) {
     if (m.gap) await new Promise((r) => setTimeout(r, m.gap));
   }
   await new Promise((r) => setTimeout(r, 1500 + (rows / 80) * 1000));   // the printer is still pulling paper
+}
+
+// A ruler across the whole print head: a tick every millimetre, numbers every 5 mm, a line on
+// dot 0 and dot 383. Printed twice, it shows where the paper's edges fall and whether the roll moves.
+function alignmentRuler() {
+  const W = T02.head, H = 15 * 8, c = document.createElement("canvas");
+  c.width = W; c.height = H;
+  const g = c.getContext("2d");
+  g.fillStyle = "#fff"; g.fillRect(0, 0, W, H);
+  g.fillStyle = "#000";
+  for (let mm = 0; mm <= 48; mm++) {
+    const x = Math.min(W - 1, mm * 8), tall = mm % 5 === 0 ? 56 : 28;
+    g.fillRect(x, 0, mm % 5 === 0 ? 2 : 1, tall);
+    if (mm % 5 === 0 && mm < 48) { g.font = "bold 18px monospace"; g.fillText(String(mm), x + 3, 80); }
+  }
+  g.fillRect(0, 0, 2, H); g.fillRect(W - 2, 0, 2, H);                // the very first and last dots
+  g.font = "bold 16px monospace"; g.fillText("48 mm head", W / 2 - 50, 110);
+  toInk(c);
+  return c;
 }
 
 function labelButtons(id, drawn) {
@@ -1183,6 +1210,15 @@ $("setBg").value = store.get("bg", "dots");
 $("setBg").addEventListener("change", (e) => store.set("bg", e.target.value));
 $("setCode").value = store.get("code", "c128-thick");
 $("setCode").addEventListener("change", (e) => store.set("code", e.target.value));
+$("setRight").value = store.get("right", "0");
+$("setRight").addEventListener("change", (e) => store.set("right", e.target.value));
+$("alignTest").addEventListener("click", async () => {
+  if (!("bluetooth" in navigator)) { say($("alignStatus"), "This browser has no Bluetooth: use Chrome or Edge.", true); return; }
+  $("alignTest").disabled = true;
+  try { await t02Print(alignmentRuler(), (m) => say($("alignStatus"), m)); say($("alignStatus"), "Printed. Photograph it next to a second one."); }
+  catch (e) { say($("alignStatus"), e.name === "NotFoundError" ? "No printer chosen." : "Printing failed: " + (e.message || e), true); }
+  $("alignTest").disabled = false;
+});
 $("signOut").addEventListener("click", () => sb.auth.signOut());
 
 // ---------------------------------------------------------------- sign in
