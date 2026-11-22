@@ -189,7 +189,7 @@ details summary { cursor: pointer; font-weight: 500; }
           <select id="setCode"><option value="c128-thick">Code 128, thick</option><option value="c128-fine">Code 128, fine</option><option value="c39">Code 39, thin</option><option value="overlay">On the photo (first design)</option></select>
         </label>
         <label>Right margin
-          <select id="setRight"><option value="0">0 mm (edge to edge)</option><option value="1">1 mm</option><option value="1.5">1.5 mm</option><option value="2">2 mm</option><option value="2.5">2.5 mm</option><option value="3">3 mm</option></select>
+          <select id="setRight"><option value="0">0 mm (edge to edge)</option><option value="1">1 mm</option><option value="1.5">1.5 mm</option><option value="2">2 mm (centres it on this T02)</option><option value="2.5">2.5 mm</option><option value="3">3 mm</option></select>
         </label>
       </div>
       <button class="btn ghost" type="button" id="alignTest">Print alignment ruler (T02)</button>
@@ -772,7 +772,7 @@ function closeSheet() {
   $("sheet").hidden = true;
   $("sheetBody").querySelectorAll("video").forEach((v) => v.pause());
 }
-function settings() { return { dpi: +store.get("dpi", "203"), bgStyle: store.get("bg", "dots"), code: store.get("code", "c128-thick"), rightMm: +store.get("right", "0") }; }
+function settings() { return { dpi: +store.get("dpi", "203"), bgStyle: store.get("bg", "dots"), code: store.get("code", "c128-thick"), rightMm: +store.get("right", "2") }; }
 const BG_STYLES = [["dots", "Dots"], ["local", "Detail"], ["balanced", "Bold"], ["solid", "Original"]];
 const CODE_STYLES = [["c128-thick", "128 thick"], ["c128-fine", "128 fine"], ["c39", "39 thin"], ["overlay", "On photo"]];
 
@@ -1210,7 +1210,7 @@ $("setBg").value = store.get("bg", "dots");
 $("setBg").addEventListener("change", (e) => store.set("bg", e.target.value));
 $("setCode").value = store.get("code", "c128-thick");
 $("setCode").addEventListener("change", (e) => store.set("code", e.target.value));
-$("setRight").value = store.get("right", "0");
+$("setRight").value = store.get("right", "2");
 $("setRight").addEventListener("change", (e) => store.set("right", e.target.value));
 $("alignTest").addEventListener("click", async () => {
   if (!("bluetooth" in navigator)) { say($("alignStatus"), "This browser has no Bluetooth: use Chrome or Edge.", true); return; }
