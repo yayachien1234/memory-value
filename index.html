@@ -1051,6 +1051,7 @@ async function play(row, via) {
   const [v, l, p] = await Promise.all([signed(row.video_path), signed(row.label_path), signed(row.photo_path)]);
   if (v) vid.src = v; else say(note, "This memory has no video.", true);
   if (p && !turned) vid.poster = p;                                  // the photo is already upright; a turned video is not
+  else if (!p && l) vid.poster = l;                                  // a sound-only memory from the Pi: show its label while it plays
   if (l) label.src = l;
   // a fresh label at the current printer settings, for printing again
   try {
